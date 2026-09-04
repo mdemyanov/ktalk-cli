@@ -81,6 +81,12 @@ fi
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$REPO_ROOT"
 
+# CHECK_SELF — путь к ЭТОМУ файлу (ADR-085 Д6). Объявления невхождения §3.2 живут в его же
+# тексте: носитель утверждения «позиция не доставляется» выбран так, чтобы он ехал вместе с
+# ростером и разъехаться с ним не мог. Второго носителя (case-таблицы рядом с комментарием)
+# намеренно нет — он и был бы тем самым местом расхождения.
+CHECK_SELF="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/$(basename "${BASH_SOURCE[0]}")"
+
 # ---------------------------------------------------------------------------
 # ADR-037 §2 — разрешение режима обязательности. Выполняется РОВНО один раз, здесь, ДО
 # первого вызова гейта — вердикт о том, обязана ли каждая позиция перечня существовать,
@@ -478,6 +484,31 @@ _conflicted() {
   _in_newline_list "$rel" "$CONFLICTED_FILES"
 }
 
+# --- ADR-085 Д6, спутник §3.2 — объявление невхождения в поставку -------------------------
+# Форма записи (одна строка комментария рядом с вызовом ростера):
+#
+#     # NOT-DELIVERED: <имя-ростера> — <метка причины>
+#
+# Метка — одна из ПЯТИ дословных (§3.2 + ADR-087 Д3): её читают сторож дополнения ниже и
+# второй текст `[INFO]` в _run_if_declared. Свободная проза рядом остаётся и метки не
+# заменяет: прозу читает человек, метку — прибор.
+#
+# Пятая — `предмет необязателен у потребителя` (ADR-087 Д3, DEV-138): у позиции, чей предмет
+# у потребителя не производится НИ каналом доставки, НИ `bin/init.sh` (уточнение Д2 к
+# критерию ADR-085 Д1(1)). Порядок в строке не косметика: срез метки КРАТЧАЙШИЙ
+# (`${line#*" — "}` ниже), поэтому метка, сама несущая тире, обязана оставаться последней.
+NOT_DELIVERED_LABELS=$'нашитая константа\nтихий ноль\nпредмет не доставляется\nпредмет необязателен у потребителя\nпредмет — репозиторий nauta'
+
+# _not_delivered_label <base> — метка причины из объявления §3.2 либо пустая строка.
+_not_delivered_label() {
+  local line=""
+  line="$(grep -m1 -E "^# NOT-DELIVERED: $1 " "$CHECK_SELF" 2>/dev/null || true)"
+  [[ -n "$line" ]] || return 0
+  # `#*" — "` — КРАТЧАЙШЕЕ совпадение: метка `предмет — репозиторий nauta` сама несёт тире,
+  # и жадный срез вернул бы «репозиторий nauta».
+  printf '%s' "${line#*" — "}"
+}
+
 # _run_if_declared <base> <ext> <runner> <kind> <kind-genitive> <func-name> — общая функция
 # для гейтов (.py, uv run) и сьютов (.sh, bash); §3 ADR-037-spec: "два безусловных вызова
 # идут через ту же функцию, исключений в правиле нет" — распространено на ВСЕ вызовы ниже,
@@ -568,6 +599,25 @@ _run_if_declared() {
 
   # Не заявлен и отсутствует — объявленное молчание (Д2/Д6): называет источник своего права,
   # не тихий [INFO] skip (Д7 — этот токен здесь не используется вовсе).
+  #
+  # Текстов ДВА (ADR-085 Д7, спутник §4), и различает их объявление §3.2, а не режим прогона.
+  # Прежний текст кончается «обнови плагин и повтори /nauta:sync-scripts» — он опирается на
+  # ADR-037 Д6 («потребитель не виноват, что гейт добавили после его синка») и предполагает,
+  # что позиция когда-нибудь придёт. Для позиций классов B/C/Д5 это ЛОЖНО: обновление плагина
+  # не внесёт их в payload никогда — ровно жалоба ишью #14. Инварианты у обоих текстов общие:
+  # строка `▶` не печатается (шаг не исполнялся), exit-код 0, токен `[INFO] skip` не
+  # используется. Отличие ровно одно и оно содержательное: первый называет лечение, второй
+  # называет, что лечения нет, и куда идти вместо него.
+  local nd_label
+  nd_label="$(_not_delivered_label "$base")"
+  if [[ -n "$nd_label" ]]; then
+    echo "[INFO] $name не доставляется в деревья-потребители: ${nd_label}. Проверка не"
+    echo "       выполняется, exit-код не меняется. Обновление плагина этого не изменит — позиция вне"
+    echo "       состава поставки по решению ADR-085; если проверка нужна вашему проекту, подключите"
+    echo "       её своим гейтом (projectGates, ADR-077)."
+    return
+  fi
+
   echo "[INFO] $name не доставлен в это дерево: базис (nauta ${BASIS_NAUTA_VERSION}, синк ${BASIS_SYNCED_AT}) его не"
   echo "       заявляет — проверка не выполняется, exit-код не меняется. Чтобы ${kind} появился: обнови"
   echo "       плагин и повтори /nauta:sync-scripts; как только ${kind} войдёт в payload, базис его заявит,"
@@ -1000,6 +1050,316 @@ if [[ "$MODE" == "--delivery-composition-only" ]]; then
   _finish
 fi
 
+# ---------------------------------------------------------------------------
+# link-integrity-delivery (ADR-083 Д1-Д3/Д7, спутник §2/§3/§4.1) — субъект проверки ссылочной
+# целостности онбординг-текста ЭТОГО дерева обязан быть СОСТАВОМ ПОСТАВКИ (`git ls-files`
+# минус `excluded:`), а не диском дерева разработки, где ADR-014/C9 уже проверяет то же самое
+# и молчит на ссылках в `content/` — область там другая (Д1/Д2 ADR-083). Место вызова — сразу
+# после delivery-composition и до secret-scan-tree (§3 спутника): тот же предмет («сначала
+# читаемость носителя, потом суждение о дереве»), тот же порядок.
+#
+# Реализация — бэш-функция плюс ОДНОФАЙЛОВЫЙ embedded-python (heredoc, не отдельный
+# scripts/*.py) намеренно, а не через run_gate_if_declared: контрактный тестовый стенд QA-081
+# (tests/test_link_integrity_delivery_gate.py, докстрока) копирует в дерево-фикстуру РОВНО
+# `scripts/check.sh` (плюс bin/deliver.sh) — ни `scripts/_validate_common.py`, ни
+# `scripts/validate-content.py` там нет. Гейт, объявленный через run_gate_if_declared,
+# получил бы там ERROR-MISSING-AT-ORIGIN на КАЖДОМ прогоне вместо содержательной проверки —
+# как и delivery-composition/secret-scan-tree, этот гейт — часть самого раннера, а не
+# отдельно поставляемый файл. Питон внутри heredoc — ради регулярных выражений и множеств
+# (резолвер/маска/таблица конструкций), которые бэш/awk воспроизвёл бы менее надёжно; такой
+# же алгоритм и та же таблица `_LINK_PATTERNS`, что у дискового резолвера C9
+# (scripts/validate-content.py::_resolve_link_target) и у второго прохода против канала
+# (scripts/check-link-integrity-channel.py) — физическая копия неизбежна по той же причине
+# самодостаточности; менять форму ссылки — значит менять все три места разом.
+LINK_INTEGRITY_SECTION="link-integrity-delivery"
+
+run_link_integrity_delivery_gate() {
+  # §2.3 (тот же приём, что ORIGIN уже применяет к delivery-composition, строки 244+): у
+  # потребителя сторож не зовётся ВООБЩЕ — ни строки вывода, exit-код не меняется.
+  [[ "$ORIGIN" -eq 1 ]] || return 0
+
+  # uv, не голый python3 (единственная внешняя зависимость check.sh — uv-guard в шапке
+  # файла; голый python3 её обошёл бы молча на среде, где интерпретатор ставит только uv).
+  # PYTHONUNBUFFERED — иначе stdout буферизуется блоками при перенаправлении в пайп и строки
+  # ERROR (stderr, небуферизован) обгоняют заголовок "▶ …" (stdout) в объединённом выводе —
+  # секция читается тестами по ПЕРВОЙ строке с литералом, порядок должен быть детерминирован.
+  local rc=0
+  PYTHONUNBUFFERED=1 uv run - "$REPO_ROOT" "$DELIVERY_CARRIER_NAME" "$LINK_INTEGRITY_SECTION" <<'PYEOF' || rc=$?
+import posixpath
+import re
+import subprocess
+import sys
+from pathlib import Path
+
+SECTION = sys.argv[3] if len(sys.argv) > 3 else "link-integrity-delivery"
+REPO_ROOT = Path(sys.argv[1]).resolve()
+CARRIER_NAME = sys.argv[2]
+CARRIER = REPO_ROOT / CARRIER_NAME
+
+PLACEHOLDER_RE = re.compile(r"\{\{[A-Z_]+\}\}")
+
+
+def has_placeholder(path: Path) -> bool:
+    """Копия scripts/_validate_common.py::has_placeholder (ADR-014 Д2/ADR-007 Д5) —
+    физическая копия неизбежна: этот процесс не смеет импортировать соседние scripts/*.py
+    (см. докстроку над функцией run_link_integrity_delivery_gate)."""
+    text = path.read_text(encoding="utf-8")
+    if not text.startswith("---"):
+        return False
+    parts = text.split("---", 2)
+    if len(parts) < 3:
+        return False
+    return bool(PLACEHOLDER_RE.search(parts[1]))
+
+
+_FENCE_RE = re.compile(r'^ {0,3}(`{3,}|~{3,})(.*)$')
+_INLINE_CODE_RE = re.compile(r'(`+)([^\n]+?)\1')
+
+
+def mask_code(text: str) -> str:
+    """Копия scripts/_validate_common.py::_mask_code."""
+    out = []
+    fence_char = None
+    fence_len = 0
+    for line in text.split("\n"):
+        m = _FENCE_RE.match(line)
+        if fence_char is None:
+            if m:
+                fence_char, fence_len = m.group(1)[0], len(m.group(1))
+                out.append(" " * len(line))
+            else:
+                out.append(line)
+            continue
+        if m and m.group(1)[0] == fence_char and len(m.group(1)) >= fence_len \
+                and not m.group(2).strip():
+            fence_char, fence_len = None, 0
+        out.append(" " * len(line))
+    return _INLINE_CODE_RE.sub(lambda m: " " * len(m.group(0)), "\n".join(out))
+
+
+# Та же таблица, что ADR-014 Д1 / scripts/validate-content.py::_LINK_PATTERNS, кроме
+# snippet_id — форма резолвится относительно content/.gramax/snippets/, которого в составе
+# поставки нет (§2 ADR-083-spec: вне области, помечается строкой, не молчанием).
+_LINK_PATTERNS = [
+    ("path", re.compile(r'!?\[[^\]\n]*\]\(([^)\n]+)\)')),
+    ("path", re.compile(r'<mermaid\s+[^>]*?path="([^"]+)"')),
+    ("path", re.compile(r'<image\s+[^>]*?src="([^"]+)"')),
+    ("path", re.compile(r'<openapi\s+[^>]*?src="([^"]+)"')),
+    ("snippet", re.compile(r'<snippet\s+[^>]*?id="([^"]+)"')),
+    ("path", re.compile(r'\[drawio:([^:\]]+):[^\]]*\]')),
+]
+_EXTERNAL_RE = re.compile(r'^(?:[a-z][a-z0-9+.\-]*:|//)', re.IGNORECASE)
+
+
+def ls_files(repo_root: Path) -> list[str]:
+    proc = subprocess.run(["git", "-C", str(repo_root), "ls-files"],
+                           capture_output=True, text=True, timeout=60)
+    if proc.returncode != 0:
+        return []
+    return [l for l in proc.stdout.splitlines() if l]
+
+
+def parse_carrier(path: Path):
+    """Мини-парсер .nauta-delivery.yaml — семантика та же, что у bash
+    _delivery_carrier_records() выше в этом файле (та же блочная форма: вход в блок по
+    заголовку без отступа, выход — на первой строке без отступа). Не PyYAML: процесс не
+    смеет тянуть внешние зависимости (см. докстроку над run_link_integrity_delivery_gate)."""
+    lines = path.read_text(encoding="utf-8").splitlines()
+    version = None
+    excluded: list[dict] = []
+    delivered: list[dict] = []
+    cur_list = None
+    cur_entry = None
+
+    def flush():
+        nonlocal cur_entry
+        if cur_entry is not None:
+            (excluded if cur_entry["list"] == "excluded" else delivered).append(cur_entry)
+        cur_entry = None
+
+    for raw in lines:
+        if raw.startswith("version:"):
+            flush(); cur_list = None
+            version = raw.split(":", 1)[1].strip().strip('"')
+            continue
+        if re.match(r'^excluded:\s*(#.*)?$', raw):
+            flush(); cur_list = "excluded"; continue
+        if re.match(r'^delivered:\s*(#.*)?$', raw):
+            flush(); cur_list = "delivered"; continue
+        if re.match(r'^\S', raw):
+            flush(); cur_list = None; continue
+        if cur_list is None:
+            continue
+        stripped = raw.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        if re.match(r'^-\s*path:', stripped):
+            flush()
+            p = re.sub(r'^-\s*path:\s*', '', stripped).strip().strip('"')
+            cur_entry = {"list": cur_list, "path": p, "reason": False, "provenance": False}
+            continue
+        if re.match(r'^reason:\s*\S', stripped) and cur_entry is not None:
+            cur_entry["reason"] = True; continue
+        if re.match(r'^provenance:\s*\S', stripped) and cur_entry is not None:
+            cur_entry["provenance"] = True; continue
+    flush()
+    return version, excluded, delivered
+
+
+def compute_kept(all_files: list[str], excluded_entries: list[dict]):
+    """§2 шаг 2: KEPT — git ls-files минус excluded (якорение: точное совпадение для
+    корневого файла, startswith для каталога со слэшем — templates/root-prompt-layer/
+    CLAUDE.md обязан ОСТАТЬСЯ, если исключён только корневой CLAUDE.md, ADR-083 §1.2).
+    KEPT_DIRS — все каталоги-префиксы путей KEPT, не только непосредственный родитель."""
+    excl_dirs = [e["path"] for e in excluded_entries if e["path"].endswith("/")]
+    excl_files = {e["path"] for e in excluded_entries if not e["path"].endswith("/")}
+    kept = []
+    for f in all_files:
+        if f in excl_files:
+            continue
+        if any(f.startswith(d) for d in excl_dirs):
+            continue
+        kept.append(f)
+    kept_set = set(kept)
+    kept_dirs = set()
+    for f in kept:
+        parts = f.split("/")[:-1]
+        prefix = ""
+        for part in parts:
+            prefix += part + "/"
+            kept_dirs.add(prefix)
+    return kept_set, kept_dirs
+
+
+def resolve(base_dir: str, target: str, kept_set: set, kept_dirs: set):
+    """§2 шаг 6: lit ∈ KEPT, либо lit ∈ KEPT_DIRS, либо lit+'.md' ∈ KEPT, либо (без
+    завершающего слэша) lit+'/_index.md' ∈ KEPT. Порядок/семантика — как у
+    scripts/validate-content.py::_resolve_link_target, только цель ищется в СОСТАВЕ, не на
+    диске (Д2)."""
+    ends_slash = target.endswith("/")
+    combined = target if base_dir in ("", ".") else f"{base_dir}/{target}"
+    lit = posixpath.normpath(combined)
+    if lit in kept_set:
+        return True, lit
+    if (lit + "/") in kept_dirs:
+        return True, lit
+    if (lit + ".md") in kept_set:
+        return True, lit
+    if not ends_slash and (lit + "/_index.md") in kept_set:
+        return True, lit
+    return False, lit
+
+
+def main() -> int:
+    # §2 шаг 1: дерево без своей истории git — «нечего проверять», не «не смог проверить»
+    # (ADR-007 Д1), форма — как у delivery-composition (сравнение через realpath, не строки:
+    # macOS расходится на /var против /private/var).
+    git_top_proc = subprocess.run(["git", "-C", str(REPO_ROOT), "rev-parse", "--show-toplevel"],
+                                   capture_output=True, text=True, timeout=30)
+    git_top = git_top_proc.stdout.strip()
+    same_tree = False
+    if git_top:
+        try:
+            same_tree = Path(git_top).resolve() == REPO_ROOT
+        except OSError:
+            same_tree = False
+    if git_top_proc.returncode != 0 or not git_top or not same_tree:
+        print(f"[INFO] {SECTION} не выполняется: у этого дерева нет своей истории git — источник")
+        print("       выборки git ls-files, поставка родится из истории (ADR-083 Д1/Д2). Это")
+        print('       "нечего проверять", не "не смог проверить" (ADR-007 Д1). Exit-код не меняется.')
+        return 0
+
+    if not CARRIER.is_file():
+        print(f"▶ {SECTION}")
+        print(f"  ✗ {SECTION} FAILED", file=sys.stderr)
+        print(f"  ERROR: носитель {CARRIER_NAME} отсутствует — состав поставки не прочитан, это не", file=sys.stderr)
+        print('  "нарушений нет" (ADR-007 Д1). Гейт delivery-composition сообщает об этом отдельно;', file=sys.stderr)
+        print(f"  здесь тот же факт назван для собственной секции {SECTION}.", file=sys.stderr)
+        return 1
+
+    version, excluded, delivered = parse_carrier(CARRIER)
+    if version != "1":
+        print(f"▶ {SECTION}")
+        print(f"  ✗ {SECTION} FAILED", file=sys.stderr)
+        print(f"  ERROR: {CARRIER_NAME} не прочитан по схеме — версия '{version}' незнакома,", file=sys.stderr)
+        print("  признаётся ровно 1 (ADR-073-spec §2.2). Состав поставки не проверен.", file=sys.stderr)
+        return 1
+
+    all_files = ls_files(REPO_ROOT)
+    kept_set, kept_dirs = compute_kept(all_files, excluded)
+
+    sources = sorted(f for f in kept_set if f == "README.md" or (f.startswith("docs/") and f.endswith(".md")))
+
+    print(f"▶ {SECTION}")
+    print(f"  проверена РАЗРЕШИМОСТЬ ссылок относительно состава поставки, а не истина текста")
+    print(f"  (ADR-076 Д3) — необходимый признак, не достаточный.")
+    if not excluded:
+        # Краевое условие §10 ADR-083-spec: пустой excluded: — «не смог проверить», НЕ
+        # «нечего исключать, всё резолвится» (замаскированный ложный зелёный). Печатается
+        # КАВЕАТОМ, а не отказом: гейт продолжает читать НОСИТЕЛЬ (а не константу) — реальное
+        # снятие исключения (delivered: пополняется явной записью) обязано оставаться
+        # наблюдаемо-зелёным, если после этого всё резолвится по существу.
+        print(f"  [INFO] excluded: пуст — форма прочитана по схеме, но границу подтвердить нечем")
+        print(f"  (пустой список не прочитан как \"всё в составе\", ADR-083-spec §10 краевое условие).")
+
+    errors: list[str] = []
+    scanned = 0
+    target_count = 0
+    snippet_seen = False
+    for source in sources:
+        full = REPO_ROOT / source
+        try:
+            text = full.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        if has_placeholder(full):
+            # §2 шаг 4 / §4.1: объявленное исключение — ИМЕНОВАННАЯ строка [INFO], не
+            # молчаливый skip (AC-059-02: «объявленно не проверяется» ≠ «совпало с битым»).
+            print(f"  [INFO] {source} — исходящие ссылки не проверяются: объявленный шаблон (Д3)")
+            continue
+        scanned += 1
+        masked = mask_code(text)
+        base_dir = posixpath.dirname(source)
+        for kind, pattern in _LINK_PATTERNS:
+            for m in pattern.finditer(masked):
+                if kind == "snippet":
+                    snippet_seen = True
+                    continue
+                raw_target = m.group(1)
+                target = raw_target.split("#", 1)[0].strip("<>")
+                if not target:
+                    continue
+                if _EXTERNAL_RE.match(target):
+                    continue
+                target_count += 1
+                ok, lit = resolve(base_dir, target, kept_set, kept_dirs)
+                if not ok:
+                    errors.append(f'  ERROR: {source}: ссылка "{raw_target}" не входит в состав поставки — {lit}')
+
+    if snippet_seen:
+        print(f"  [INFO] {SECTION}: форма snippet вне области — .gramax/ не входит в поставку (§2)")
+
+    if errors:
+        for e in errors:
+            print(e, file=sys.stderr)
+        print(f"  ✗ {SECTION} FAILED", file=sys.stderr)
+        return 1
+
+    print(f"  ✓ {SECTION} (состав {len(kept_set)}, источников {scanned}, целей {target_count})")
+    return 0
+
+
+sys.exit(main())
+PYEOF
+  if [[ "$rc" -ne 0 ]]; then
+    failed=1
+  fi
+}
+
+if [[ "$MODE" != "--secret-scan-only" ]]; then
+  run_link_integrity_delivery_gate
+fi
+
 if [[ "$MODE" != "--delivery-composition-only" ]]; then
   run_secret_scan_tree_gate
 fi
@@ -1010,11 +1370,144 @@ fi
 if [[ "$MODE" == "--secret-scan-only" ]]; then
   _finish
 fi
+# ---------------------------------------------------------------------------
+# roster-declaration (ADR-085 Д6, спутник §3.3) — сторож ДОПОЛНЕНИЯ ростера, не его мощности.
+# Правило одно: каждое имя ростера принадлежит либо PAYLOAD_FILES, либо объявлению
+# невхождения §3.2 с меткой причины; третьего не дано (форма — прецедент ADR-073 Д3).
+#
+# Почему дополнение, а не число: `assert len(PAYLOAD_FILES) == N` в четырёх
+# tests/test_sync_scripts_*.py ловит «позиция пропала», но слеп к «позицию забыли добавить» —
+# на базе b916433 вне поставки стояли ВОСЕМЬ имён ростера и ни одно из них не было объявлено
+# (ишью #14 потребителя). Оба прибора остаются: они ловят разные дефекты.
+#
+# Половина ORIGIN=1 — по тому же основанию, что у delivery-composition (§2.3 ADR-073): у
+# потребителя предмета нет вовсе, bin/deliver.sh ему не едет.
+#
+# Область — ростер (15 имён), а не весь scripts/: среди файлов вне поставки живёт внутренний
+# инструментарий (execution_store*, measure-*), у которого вопроса о поставке нет.
+run_roster_declaration_gate() {
+  [[ "$ORIGIN" -eq 1 ]] || return 0
+
+  echo "▶ roster-declaration"
+
+  # Собственный флаг исхода: `failed` к этому моменту мог быть поднят СОСЕДНИМ гейтом, и
+  # `✗ roster-declaration FAILED` тогда назвал бы чужой отказ своим (ADR-042 Д3 — маркер
+  # принадлежит одному исходу).
+  local rd_failed=0
+
+  # Якорь начала строки СНЯТ намеренно: check-hooks-path и check-branch-discipline стоят в
+  # ветках `case … esac`, и с якорем ростер даёт 13 имён вместо 15 — сторож молча сузил бы
+  # собственный предмет (отрицательный контроль прибора — спутник ADR-085 §1.1).
+  # ЛОВУШКА САМОЧТЕНИЯ, а не украшение: заголовок цикла сьют собирается из кусков и целиком
+  # в тексте этого файла не встречается. Второй прибор ростера
+  # (tests/test_qa083_gate_delivery_by_subject.py::_roster) берёт блок цикла НЕЖАДНЫМ
+  # регекспом от заголовка до ближайшего `done` — по ПЕРВОМУ вхождению в файле. Написанный
+  # здесь целиком, заголовок стал бы этим первым вхождением, и оба прибора увидели бы вместо
+  # цикла ростера тело функции ниже: замер падал с 15 имён до 10 (наблюдалось при заведении
+  # сторожа, до правки).
+  local loop_anchor="for suite"
+  local roster payload_bases decl_lines
+  roster="$( { grep -oE '(run_gate_if_declared|run_gate_sh_if_declared|run_suite_if_declared) "[a-z-]+"' "$CHECK_SELF" \
+                 | grep -oE '"[a-z-]+"' | tr -d '"' || true
+               sed -n "/${loop_anchor} in/,/done/p" "$CHECK_SELF" | grep -oE 'test-[a-z-]+' || true; } | sort -u)"
+  payload_bases="$(sed -n '/^PAYLOAD_FILES=(/,/^)/p' "$ORIGIN_INSTALLER" \
+                     | grep -oE '"[^"]+"' | tr -d '"' | sed -e 's#.*/##' -e 's#\.[^.]*$##' | sort -u || true)"
+  decl_lines="$(grep -E '^# NOT-DELIVERED: ' "$CHECK_SELF" || true)"
+
+  local roster_n decl_n
+  roster_n="$(printf '%s\n' "$roster" | grep -c . || true)"
+  decl_n="$(printf '%s\n' "$decl_lines" | grep -c . || true)"
+
+  local name label in_payload has_decl
+  while IFS= read -r name; do
+    [[ -n "$name" ]] || continue
+    in_payload=0
+    printf '%s\n' "$payload_bases" | grep -Fxq -- "$name" && in_payload=1 || true
+    label="$(_not_delivered_label "$name")"
+    has_decl=0
+    [[ -n "$label" ]] && has_decl=1 || true
+
+    if [[ "$in_payload" -eq 1 && "$has_decl" -eq 1 ]]; then
+      echo "  ERROR: \"$name\" доставляется и объявлено недоставляемым одновременно —" >&2
+      echo "  позиция стоит в PAYLOAD_FILES (bin/deliver.sh) и несёт объявление" >&2
+      echo "  \"# NOT-DELIVERED: $name — $label\" в scripts/check.sh. Это противоречие, а не" >&2
+      echo "  двойная страховка (§3.3 ADR-085): потребитель получит файл и прочитает, что его" >&2
+      echo "  не получит. Почини: сними одно из двух." >&2
+      rd_failed=1
+    elif [[ "$in_payload" -eq 0 && "$has_decl" -eq 0 ]]; then
+      echo "  ERROR: \"$name\" не доставляется и невхождение не объявлено — имя стоит в ростере" >&2
+      echo "  scripts/check.sh, но его нет ни в PAYLOAD_FILES (bin/deliver.sh), ни в объявлениях" >&2
+      echo "  §3.2. Потребитель получит [INFO] с лечением, которого нет (ишью #14). Почини:" >&2
+      echo "  внеси позицию в PAYLOAD_FILES, если её предмет есть у потребителя (критерий" >&2
+      echo "  ADR-085 Д1), либо объяви невхождение строкой" >&2
+      echo "  \"# NOT-DELIVERED: $name — <метка>\" рядом с вызовом; метки — ADR-085 §3.2." >&2
+      rd_failed=1
+    fi
+  done <<< "$roster"
+
+  # Метка вне дословной пятёрки (§3.2 + ADR-087 Д3) — отказ, а не тихое принятие: свободную
+  # прозу читает человек, метку — этот сторож и текст [INFO]. Проверяются ВСЕ объявления, а не
+  # только найденные обходом ростера: объявление с опечаткой в имени иначе не прозвучало бы
+  # нигде.
+  local decl_label
+  while IFS= read -r name; do
+    [[ -n "$name" ]] || continue
+    decl_label="${name#*" — "}"
+    if ! printf '%s\n' "$NOT_DELIVERED_LABELS" | grep -Fxq -- "$decl_label"; then
+      echo "  ERROR: метка причины вне дословной пятёрки ADR-085 §3.2 (пятая — ADR-087 Д3):" >&2
+      echo "  \"$decl_label\" (строка: \"$name\"). Метка — не проза: её читают этот сторож и" >&2
+      echo "  второй текст [INFO]. Допустимы ровно пять: нашитая константа | тихий ноль |" >&2
+      echo "  предмет не доставляется | предмет необязателен у потребителя | предмет —" >&2
+      echo "  репозиторий nauta." >&2
+      rd_failed=1
+    fi
+  done <<< "$decl_lines"
+
+  if [[ "$rd_failed" -eq 0 ]]; then
+    echo "  ✓ roster-declaration (${roster_n} имён ростера, ${decl_n} объявлений невхождения)"
+  else
+    echo "  ✗ roster-declaration FAILED" >&2
+    failed=1
+  fi
+}
+
+run_roster_declaration_gate
+
 # Два безусловных вызова (§3 ADR-037-spec: "исключений в правиле нет") — идут через ТУ ЖЕ
 # функцию, что и остальной перечень: в реальном payload'е они всегда заявлены и присутствуют,
 # наблюдаемое поведение не меняется; расходится только текст, если они когда-нибудь пропадут.
 run_gate_if_declared "validate-content"
 run_gate_if_declared "validate-profile"
+# Объявление невхождения §3.2 — позиция ВНЕ поставки по решению ADR-087 (Д1/Д3/Д4), которое
+# закрыло остановку DEV-135. ADR-085 Д2 назвал этот гейт классом A по критерию Д1(3);
+# ADR-087 Д1 переклассифицировал: позиция покидает класс A по провалу Д1(1) («предмет есть у
+# потребителя»), а не Д1(3), и мощность `PAYLOAD_FILES` остаётся 21 (перечень класса A и
+# число `20 → 23` ADR-085 Д2 замещены ADR-087 Д5; текст ADR-085 не правится).
+# ADR-085 Д2 назвал этот гейт классом A («доставляется этой волной») на основании Д1(3) —
+# «на дереве без предмета печатает ГРОМКИЙ ноль». Замер, которым это обосновано (спутник §2.1),
+# снят на стенде, где каталог-предмет СОЗДАН РУКАМИ: `mkdir -p $S/content/00-project/adr`.
+# У настоящего потребителя каталога нет: ни `bin/deliver.sh`, ни
+# `templates/content-scaffold/00-project/` его не заводят («`adr/` — создаёт
+# `/nauta:sa adr <решение>`»). На таком входе гейт по СВОЕМУ принятому решению ADR-013 Д4
+# («`docs/adr/` не существует/нечитаем — «не смог» ≠ «нет нарушений», ADR-007 Д1») печатает
+# `ERROR: … not found or not a directory — gate did not run.` и возвращает 1, то есть Д1(3)
+# НЕ выполнено, а `check.sh --fast` у потребителя краснеет — вопреки ADR-030 Д6(2). Замер
+# DEV-135 на sibling-потребителе, собранном `bin/deliver.sh`: с позицией в payload —
+# `✗ check.sh --fast — FAILED`; на базе 66d7c91 тот же стенд — `✓ check.sh --fast — passed`.
+# Прецедент остановки ступени по тому же ADR-030 Д6(2) — DEV-111 (перевод id-check.sh в --fast).
+# Метка — ПЯТАЯ (ADR-087 Д3), заведённая этой позицией: предмет проверки у потребителя
+# необязателен. `нашитая константа` для неё ЛОЖНА — `DEFAULT_ADR_DIR`
+# (`scripts/check-adr-line-limit.py:53`) константа, но называет она обычный путь ПОТРЕБИТЕЛЯ,
+# а не артефакт nauta, и потребителю, у которого ADR есть, второй `[INFO]` напечатал бы
+# неправду: тот же класс дефекта, что снимало ишью #14. Развилка («править exit-таксономию
+# ADR-013 Д4 / заводить каталог в скаффолде / структурный маркер из `bin/deliver.sh`») закрыта
+# ADR-087 целиком — все три ветви отклонены с основанием (§Alternatives). Условие входа
+# позиции в payload названо и проверяемо (Д4): каталог `content/00-project/adr/` начинает
+# производиться для ОБЕИХ популяций ADR-030 Д6(2) без нарушения ADR-041 Д1; до того
+# потребителю, ведущему ADR, адресован `projectGates` (ADR-077) — его называет второй
+# `[INFO]` ниже. Объявление СЬЮТЫ (`test-check-adr-line-limit`) метку НЕ меняет: она не едет
+# потому, что не едет её предмет-скрипт.
+# NOT-DELIVERED: check-adr-line-limit — предмет необязателен у потребителя
 run_gate_if_declared "check-adr-line-limit"
 
 # check-test-subject-governs (ADR-070; вызов — ADR-072 Д3/Д4). До DEV-111 гейт не звался
@@ -1032,6 +1525,13 @@ run_gate_if_declared "check-adr-line-limit"
 # `tests/test_qa073_adr070_governs_marker_gate.py`; переоткрывать принятое решение критерий
 # BA-056 запрещает. Разбирает исход раннер — здесь. Состав поставки этой волной не меняется
 # (ADR-072 Д5): вызов и поставка — разные вопросы (ADR-037 Д1).
+# Объявление невхождения §3.2 ADR-085 (Д4). Основание — ЗАМЕР на дереве формы потребителя:
+# гейт печатает 0 БАЙТ и возвращает 0, то есть его ноль неотличим от незапущенного прогона
+# (ADR-007 Д1). Доставить его значило бы воспроизвести у потребителя класс ишью #11/#12.
+# Условие входа в поставку названо и проверяемо: строка вида `INFO: scanned 0 test file(s)`
+# (форма соседа по Д2), после чего позиция вносится обычной правкой числа. Exit-контракт
+# ADR-070 при этом НЕ трогается — правится только громкость пустого входа.
+# NOT-DELIVERED: check-test-subject-governs — тихий ноль
 run_gate_if_declared "check-test-subject-governs" "1"
 
 # check-content-actuality (ADR-076 Д5/Д7, DEV-118). Предмет — разрешимость ОБЪЯВЛЕННЫХ
@@ -1064,7 +1564,38 @@ if [[ "$MODE" == "--full" ]]; then
   # после починки разбора заголовков бэклога (### и ####, scripts/check-backlog-closure.py,
   # эта же задача) — на реальном дереве даёт `OK: 0 нарушений`, не молчал раньше по причине
   # отсутствия вызова, а падал бы `ERROR: не найдены секции` до фикса.
+  # Объявление невхождения §3.2 ADR-085 (Д3). Стоит в НУЛЕВОЙ колонке намеренно: форма
+  # объявления машиночитаема и якорена на начало строки — отступ блока `--full` сделал бы
+  # запись невидимой и для сторожа roster-declaration, и для текста [INFO].
+  # Основание — замер: путь бэклога нашит константой `scripts/check-backlog-closure.py:63`
+  # с ИМЕНЕМ АРТЕФАКТА nauta (2026-07-24-template-improvements-backlog.md), и на дереве
+  # потребителя гейт даёт rc=1 на файле, которого у того быть не может. Параметризация пути
+  # этой волной НЕ поручена (Д3): «что считать бэклогом у потребителя» — вопрос BA.
+# NOT-DELIVERED: check-backlog-closure — нашитая константа
   run_gate_if_declared "check-backlog-closure"
+
+  # check-onboarding-staleness (ADR-083 Д4, спутник §4.2/§1.4; DEV-133 по находке ревью
+  # DEV-132 — «сторож без вызывающего»: `grep -rn check-onboarding-staleness --include=*.sh
+  # --include=*.py .` за пределами tests/ и своего же файла давал пусто до этой правки).
+  # Живёт в --full, не --fast, по тому же основанию, что check-backlog-closure выше: предмет —
+  # версия ПЛАГИНА (`.claude-plugin/plugin.json`) против онбординг-текста README.md/docs/**,
+  # а не отдельный коммит — между правкой текста и бампом version в норме проходят коммиты
+  # эпика, и --fast бил бы по каждому из них.
+  #
+  # Вызывается БЕЗ аргументов (`run_gate_if_declared`, ADR-037-spec §3) — гейт получил
+  # умолчание `--root` от `__file__` этой же правкой, иначе первый же прогон падал бы на
+  # разборе argparse (`--root` был `required=True`).
+  #
+  # Предмет — этот же репозиторий (README.md/docs/getting-started.md/docs/upgrading-the-
+  # plugin.md контура разработки nauta), не поставка потребителю: `bin/deliver.sh` эту
+  # позицию НЕ доставляет (PAYLOAD_FILES её не несёт), онбординг-текст потребителя — не
+  # nauta'шный README. Дерево-потребитель получит объявленное молчание (INFO-NOT-DELIVERED,
+  # ADR-037 §3) и exit-код не изменится.
+  # Объявление невхождения §3.2 ADR-085. Решение принято раньше (ADR-083) и было записано
+  # прозой абзацем выше — читателя-прибора у той записи не было ни одного, поэтому ишью #14
+  # назвало семь имён из восьми: восьмое просто не прозвучало у потребителя.
+# NOT-DELIVERED: check-onboarding-staleness — предмет — репозиторий nauta
+  run_gate_if_declared "check-onboarding-staleness"
 
   # id-check (ADR-038 Д3/Д8, ADR-038-spec §4.3/§5; решение владельца Р22, roadmap 2026-08-18)
   # — коллизии, невозврат отменённого номера, расхождение реестра .nauta-ids.yaml с корпусом.
@@ -1158,6 +1689,17 @@ if [[ "$MODE" == "--full" ]]; then
   # ровно того класса, что дали ишью #11/#12: проверка признавалась работающей по признаку,
   # снятому с СОБСТВЕННОГО дерева. Сьюта входит в PAYLOAD_FILES — без регистрации здесь она
   # ехала бы к каждому потребителю и не бежала ни в одном профиле (вакуум DEV-019/DEV-022).
+  # Объявления невхождения §3.2 ADR-085 (Д5), нулевая колонка — по тому же основанию, что у
+  # check-backlog-closure выше. Сьюта едет только со своим предметом: test-check-backlog-
+  # closure следует за гейтом класса B (Д3), а test-check-breaking-change-section не
+  # доставляется никогда — её предмет `check-breaking-change-section.py` не доставляется и не
+  # зовётся по Ruling E. Регистрация обеих в ростере сохраняется: ADR-017 отделяет
+  # регистрацию раннера от применимости предмета, снятие вернуло бы вакуум DEV-019/DEV-022.
+# Сьюта гейта, чья доставка ОСТАНОВЛЕНА выше, — по тому же правилу Д5 «сьюта едет только со
+# своим предметом», которым Д2 её и вносил («едет за предметом»).
+# NOT-DELIVERED: test-check-adr-line-limit — предмет не доставляется
+# NOT-DELIVERED: test-check-backlog-closure — предмет не доставляется
+# NOT-DELIVERED: test-check-breaking-change-section — предмет не доставляется
   for suite in test-check-adr-line-limit test-check-backlog-closure \
                test-check-breaking-change-section test-check-id \
                test-validate-content; do

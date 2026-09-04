@@ -8,6 +8,7 @@
 """Shared utilities for validate-content.py and validate-profile.py."""
 from __future__ import annotations
 
+import hashlib
 import re
 import sys
 from dataclasses import dataclass
@@ -481,3 +482,173 @@ def grandfather_issue(path: str, rel: str, lines: int, ceiling: int,
                  f"грандфазер-потолок превышен: {lines} строк тела > {ceiling} ({rel}). "
                  f"Верни рост, или подними ceiling явной правкой sizeBudgetGrandfathered "
                  f"в этом же коммите ({above_ceiling}).")
+
+
+# BA-060 (NA-EPIC-43, issue #16 потребителя): имя companion-спеки настраивается позаписно.
+# Умолчание воспроизводит сегодняшний литерал побайтово -- запись БЕЗ ключа обязана искать
+# ровно `{stem}-spec.md` рекурсивно по всему content/ (AC-060-01/02). Тело живёт здесь, а не
+# рядом с вызовом, по тому же доводу, что и grandfather_issue выше: ADR-063 Д5 --
+# `validate-content.py` стоит ровно на своём грандфазер-потолке, и рост снимается разбиением,
+# а не продлением ceiling.
+COMPANION_STEM_TOKEN = "{stem}"
+COMPANION_DEFAULT_PATTERN = COMPANION_STEM_TOKEN + "-spec.md"
+
+
+def companion_pattern_issue(budget: dict, carrier: str) -> Issue | None:
+    """Отказ записи, чей `companionPattern` не зависит от stem предмета (BA-060 AC-060-04).
+
+    Один и тот же литерал для всех статей типа сделал бы признак «у решения есть СВОЙ
+    спутник» верным или ложным для типа разом, а два разных предмета молча разделили бы один
+    физический файл-спутник. Запись отвергается целиком (её не берёт выборка C11), а не
+    подменяется умолчанием: молчаливая подмена объявленного шаблона -- то же самое
+    «опечатка тихо выключает половину гейта», против которого написан ADR-066 Д4.
+
+    Запись без ключа (`None`) -- законна и означает умолчание: ключ опционален по построению.
+    """
+    if budget.get("quality") != "companion-spec" or budget.get("companionPattern") is None:
+        return None
+    value = budget["companionPattern"]
+    if isinstance(value, str) and COMPANION_STEM_TOKEN in value:
+        return None
+    return Issue("error", carrier,
+                 f"sizeBudgets[{budget.get('type')!r}]: companionPattern {value!r} не "
+                 f"содержит {COMPANION_STEM_TOKEN} и потому не зависит от предмета -- все "
+                 f"статьи типа разделили бы один файл-спутник, и признак «у решения есть "
+                 f"СВОЙ спутник» стал бы верным или ложным для типа разом (BA-060 "
+                 f"AC-060-04). Запись отвергнута целиком; убери ключ ради умолчания "
+                 f"{COMPANION_DEFAULT_PATTERN!r} или впиши в шаблон "
+                 f"{COMPANION_STEM_TOKEN}.")
+
+
+def companion_spec_issues(md_path: Path, content_dir: Path, budget: dict, rel: str,
+                          lines: int, ceiling: int | None, level: str) -> list[Issue]:
+    """Качественный признак `companion-spec` C11 для одного подтверждённого по T предмета.
+
+    Имя спутника -- `companionPattern` записи с подстановкой stem предмета; без ключа это
+    сегодняшний литерал `{stem}-spec.md`. Поиск остаётся РЕКУРСИВНЫМ по всему `content_dir`
+    (AC-060-02): в этом дереве ни один из 65 спутников ADR не лежит рядом с предметом --
+    сужение до каталога предмета уронило бы все 65.
+    """
+    pattern = budget.get("companionPattern") or COMPANION_DEFAULT_PATTERN
+    companion = pattern.replace(COMPANION_STEM_TOKEN, md_path.stem)
+    if any(content_dir.rglob(companion)):
+        return []  # качественный признак не провален -- тихий проход
+    if ceiling is not None:
+        return [grandfather_issue(str(md_path), rel, lines, ceiling, "ADR-018 Д5",
+                                  "ADR-018 Д5, прецедент GRANDFATHERED, ADR-013 Д1")]
+    return [Issue(level, str(md_path),
+            f"тело {lines} строк > T={budget['thresholdLines']} "
+            f"(Тип контента: {budget['type']}); "
+            f"companion-спека {companion} не найдена. "
+            f"P1: расщепи decision/деталь -- вынеси процедурную детализацию в "
+            f"{companion} (kind: reference, без лимита строк) -- ADR-013 Д2, ADR-018.")]
+
+
+# check_lesson_destiny -- C20-form (ADR-088 Д4): предмет -- корневой реестр
+# `.nauta-lesson-destiny.yaml`, не файл content/. Тело живёт здесь, а не в
+# validate-content.py, по тому же доводу ADR-063 Д5, что и остальные тела C-проверок вокруг --
+# validate-content.py стоит на своём грандфазер-потолке (1658, замерено на 1654 -- запас 4
+# строки). Псевдокод -- ADR-088-spec §5, плюс шестая, безымянная в §3 ветка (находка QA-085,
+# at-design.md "Находка"): §4/§6 ADR-088-spec прямым текстом требуют error на строке,
+# ОДНОВРЕМЕННО живой и уже несущей archived-in -- буквальный псевдокод §5 этот случай не ловит
+# (И1 находит запись, И3 внутри archived-in-ветки видит строку в названном архиве, орфана нет).
+_LESSON_ROW_RE = re.compile(r"^\| 20\d\d-\d\d-\d\d \|")
+_LESSON_DESTINY_WORDS = ("closed", "dev-task", "backlog-candidate")
+
+
+def _lesson_table_rows(path: Path) -> list[str]:
+    """Дословные строки таблицы журнала/архива. Идентичность строки -- sha от строки ЦЕЛИКОМ
+    (M3/M4 ADR-088-spec), поэтому экранированная `\\|` внутри ячейки (M1) не участвует в
+    разборе полей здесь и не ломает идентификацию -- ровно свойство, которого просит
+    boundary-тест `test_boundary_escaped_pipe_in_a_cell_does_not_break_row_identity`."""
+    if not path.is_file():
+        return []
+    return [ln for ln in path.read_text(encoding="utf-8").splitlines() if _LESSON_ROW_RE.match(ln)]
+
+
+def _lesson_row_sha12(line: str) -> str:
+    """`sha256(строка целиком, UTF-8).hexdigest()[:12]` -- форма ключа §3 ADR-088-spec."""
+    return hashlib.sha256(line.encode("utf-8")).hexdigest()[:12]
+
+
+def _lesson_backlog_resolves(carrier: str, repo_root: Path) -> bool:
+    """И5: `carrier` разрешается, если он дословно встречается в тексте файла-преемника
+    `content/00-project/*-roadmap-candidates-backlog.md` (BA-061: "A backlog candidate names
+    its source row"). Файл-преемник -- glob по суффиксу имени, не литерал одной даты: имя
+    файла бэклога несёт дату заведения и меняется от волны к волне."""
+    backlog_dir = repo_root / "content" / "00-project"
+    if not carrier or not backlog_dir.is_dir():
+        return False
+    for p in sorted(backlog_dir.glob("*-roadmap-candidates-backlog.md")):
+        if carrier in p.read_text(encoding="utf-8", errors="replace"):
+            return True
+    return False
+
+
+def check_lesson_destiny(registry_path: Path, repo_root: Path) -> list[Issue]:
+    """C20-форма (ADR-088 Д4): сверка `.nauta-lesson-destiny.yaml` с живой таблицей журнала и
+    файлами `content/lessons-archive/*.md`, пять инвариантов §3 ADR-088-spec + шестая ветка
+    (см. комментарий выше файла). Файла нет -- тихий проход (ADR-031 Д3, ADR-088 Д1): у
+    потребителя плагина реестра нет и не будет (`grep -c "nauta-lesson-destiny" bin/deliver.sh`
+    -> 0). Битый YAML -- error (MalformedYamlError), не тихий skip (ADR-007 Д1): "не смог
+    прочитать" отличается от "нечего проверять" -- тот же контракт, что у check_absence_records.
+    """
+    carrier = registry_path.name
+    if not registry_path.is_file():
+        return []
+    try:
+        data = parse_yaml_file(registry_path)
+    except MalformedYamlError as e:
+        return [issue_from_yaml_error(e)]
+    records = data.get("records") if isinstance(data, dict) else None
+    if not isinstance(records, list):
+        records = []  # `records: []`/отсутствие ключа -- норма (Dev-бриф §7 п.1), не ошибка
+
+    def issue(msg: str, rec) -> Issue:
+        row = rec.get("row", rec.get("row-sha", "?")) if isinstance(rec, dict) else rec
+        return Issue("error", carrier, f"{carrier}: {msg} -- {row}")
+
+    live = {_lesson_row_sha12(l): l for l in _lesson_table_rows(
+        repo_root / "content" / "lessons-learned.md")}
+    archive_dir = repo_root / "content" / "lessons-archive"
+    arch: dict[str, set[str]] = {}
+    if archive_dir.is_dir():
+        for p in sorted(archive_dir.glob("*.md")):
+            key = f"content/lessons-archive/{p.name}"
+            arch[key] = {_lesson_row_sha12(l) for l in _lesson_table_rows(p)}
+
+    issues: list[Issue] = []
+    seen: set[str] = set()
+    for rec in records:
+        if not isinstance(rec, dict):
+            issues.append(issue("запись задана не отображением меток", rec))
+            continue
+        row_sha = rec.get("row-sha")
+        destiny = rec.get("destiny")
+        archived_in = rec.get("archived-in")
+        if row_sha in seen:
+            issues.append(issue("дубль ключа row-sha", rec))  # И2
+        seen.add(row_sha)
+        if destiny not in _LESSON_DESTINY_WORDS:  # И2
+            issues.append(issue(
+                f"судьба {destiny!r} вне трёх дословных слов контракта {_LESSON_DESTINY_WORDS}",
+                rec))
+        if not archived_in:
+            if row_sha not in live:  # И3
+                issues.append(issue("запись без живой строки", rec))
+        else:
+            if row_sha in live:  # шестая ветка -- переходное состояние (находка QA-085)
+                issues.append(issue(
+                    "строка одновременно жива и уже несёт archived-in -- незаконное "
+                    "переходное состояние (§4 ADR-088-spec)", rec))
+            if destiny != "closed" or not rec.get("carrier"):  # И4
+                issues.append(issue("перенос строки без разрешённой судьбы", rec))
+            if row_sha not in arch.get(archived_in, set()):  # И3
+                issues.append(issue(
+                    f"строка не найдена в названном файле архива {archived_in!r}", rec))
+        if destiny == "backlog-candidate" and not _lesson_backlog_resolves(
+                rec.get("carrier"), repo_root):  # И5
+            issues.append(issue("кандидат бэклога без провенанса исходной строки", rec))
+    for sha in live.keys() - seen:  # И1
+        issues.append(issue("живая строка без записи исхода", sha))
+    return issues

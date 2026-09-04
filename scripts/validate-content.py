@@ -41,6 +41,8 @@ from _validate_common import (
     parse_frontmatter, parse_yaml_file, has_placeholder, PLACEHOLDER_RE, require_yaml,
     _mask_code, check_absence_records,  # C20 (DEV-110, ADR-072 Д1) — тело вынесено, см. §ниже
     grandfather_issue,  # C11 (DEV-123, ADR-078) — форма отчёта о потолке, общая двум веткам
+    companion_spec_issues, companion_pattern_issue,  # C11 (DEV-137, BA-060) — вынесено, §ниже
+    check_lesson_destiny,  # C20-форма (DEV-139, ADR-088 Д4) — тело в _validate_common.py
 )
 from _conflict_markers import check_conflict_markers  # C19 (DEV-090) — вынесено, см. §ниже
 
@@ -599,6 +601,7 @@ def _repo_relative(md_path: Path, content_dir: Path) -> str:
 # набор тем же коммитом, иначе он молча попадёт под "ключ вне закрытого набора".
 _SIZE_BUDGET_ALLOWED_KEYS = {
     "type", "thresholdLines", "quality", "qualityThreshold", "severity", "status",
+    "companionPattern",  # BA-060: имя companion-спеки, только для quality: companion-spec
 }
 
 
@@ -645,6 +648,10 @@ def check_size_budget(content_dir: Path, doc_root: dict) -> list[Issue]:
                     "вырожденный/отсутствующий порог не должен тихо гасить или ложно зажигать "
                     "качественную половину пары (ADR-067 Д3, canon «An empty cell ... not "
                     "permitted»)"))
+        pattern_issue = companion_pattern_issue(b, GATES_FILENAME)
+        if pattern_issue is not None:
+            issues.append(pattern_issue)  # BA-060 AC-060-04: запись отвергнута целиком
+            continue
         if has_threshold:
             entries[label] = b
     if not entries:
@@ -679,18 +686,8 @@ def check_size_budget(content_dir: Path, doc_root: dict) -> list[Issue]:
         level = "error" if severity == "block" else "warning"
 
         if quality == "companion-spec":
-            if any(content_dir.rglob(f"{md_path.stem}-spec.md")):
-                continue  # качественный признак не провален -- тихий проход
-            if ceiling is not None:
-                issues.append(grandfather_issue(str(md_path), rel, lines, ceiling,
-                    "ADR-018 Д5",
-                    "ADR-018 Д5, прецедент GRANDFATHERED, ADR-013 Д1"))
-                continue
-            issues.append(Issue(level, str(md_path),
-                f"тело {lines} строк > T={threshold} (Тип контента: {type_value}); "
-                f"companion-спека {md_path.stem}-spec.md не найдена. "
-                f"P1: расщепи decision/деталь -- вынеси процедурную детализацию в "
-                f"{md_path.stem}-spec.md (kind: reference, без лимита строк) -- ADR-013 Д2, ADR-018."))
+            issues += companion_spec_issues(md_path, content_dir, budget, rel, lines,
+                                            ceiling, level)  # BA-060: шаблон имени спутника
             continue
 
         # quality == "longest_run_without_structure"
@@ -1536,6 +1533,7 @@ def main(argv: list[str]) -> int:
     # C20 (ADR-072 Д1) — наравне с C13/C14/C18: предмет лежит в корне, не в content/, и
     # проверка обязана исполняться во всех трёх состояниях контура Д (Д4 ADR-041).
     issues.extend(check_absence_records(repo_root / ABSENCE_RECORDS_FILENAME, repo_root))
+    issues.extend(check_lesson_destiny(repo_root / ".nauta-lesson-destiny.yaml", repo_root))
 
     # Один битый файл видят несколько независимых rglob-проходов. Схлопываем ДО подсчёта:
     # `Errors: N` считается из списка, а не на печати (ADR-007 Д5).
