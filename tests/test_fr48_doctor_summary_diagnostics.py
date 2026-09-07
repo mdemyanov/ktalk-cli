@@ -39,7 +39,20 @@ def test_fr48_1_doctor_is_registry_free_ignores_unreachable_db(
     monkeypatch, tmp_path, httpx_mock: HTTPXMock, capsys
 ):
     """NFR-23/FR-48: `doctor` не открывает реестр — тот же приём, что уже
-    закрывает FR-19 для `auth-status` (`test_fr19_auth_status.py`)."""
+    закрывает FR-19 для `auth-status` (`test_fr19_auth_status.py`).
+
+    Санкция координатора (не подгонка теста под реализацию): исходная фикстура
+    не писала файл токена, поэтому окружение совпадало с
+    `test_fr48_8_absent_token_file_is_declared_failure_even_when_auth_alive` —
+    оба теста требовали противоположный `rc` на одном и том же нездоровом
+    окружении, зелёными одновременно быть не могли ни при какой реализации
+    `doctor`. Нормативен `test_fr48_8` (цитирует объявленный след ADR-026
+    «Последствия», композитная логика отклонена в «Альтернативах» того же
+    решения). Предмет ЭТОГО теста — недоступность реестра (NFR-23), не
+    состояние файла токена, поэтому фикстура получает пригодный токен, чтобы
+    `rc == 0` проверял именно то, что заявлено в докстринге, на здоровом
+    окружении — тем же приёмом, что в остальных happy-path тестах файла.
+    """
     monkeypatch.chdir(tmp_path)
     monkeypatch.delenv("CLAUDE_PROJECT_DIR", raising=False)
     monkeypatch.setenv("KTALK_TOKEN_FILE", str(tmp_path / "no-such-token-file"))
@@ -48,6 +61,9 @@ def test_fr48_1_doctor_is_registry_free_ignores_unreachable_db(
     httpx_mock.add_response(json={"recordings": []})
 
     from ktalk_cli.cli import main
+    from ktalk_cli.token_file import write_token
+
+    write_token("okDOCTORtoken0000001")
 
     rc = main(["--db", UNAVAILABLE_DB, "doctor", "--json"])
 

@@ -20,6 +20,8 @@ from ktalk_cli.cli_content import (
     cmd_list_recordings,
 )
 from ktalk_cli.cli_content import register_subparsers as register_content_subparsers
+from ktalk_cli.cli_doctor import cmd_doctor
+from ktalk_cli.cli_doctor import register_subparsers as register_doctor_subparsers
 from ktalk_cli.cli_meeting import cmd_cancel_meeting_preview, cmd_create_meeting_preview
 from ktalk_cli.cli_meeting import register_subparsers as register_meeting_subparsers
 from ktalk_cli.cli_meeting_confirm import (
@@ -126,6 +128,7 @@ def build_parser() -> argparse.ArgumentParser:
     register_content_subparsers(sub)
     register_meetings_read_subparsers(sub)
     register_store_subparsers(sub)
+    register_doctor_subparsers(sub)
 
     return parser
 
@@ -277,6 +280,10 @@ def _host_config_to_dict(host_config: HostConfig | None) -> dict:
         "directories": host_config.directories,
         "routing": host_config.routing,
         "integrations": host_config.integrations,
+        # FR-48: `doctor` и `config show` называют один и тот же путь одним
+        # значением (ADR-026 spec §2) — ключ появляется только когда конфиг
+        # найден, отсутствие файла не путь, а нормальная ветка.
+        "path": str(host_config.path),
     }
 
 
@@ -335,6 +342,9 @@ _REGISTRY_FREE_COMMANDS = {
     # побочный эффект простого запуска команды, что противоречит NFR-12
     # ("миграция — явный шаг, без скрытых побочных эффектов").
     "migrate-to-central-store",
+    # FR-48: `doctor` агрегирует пять существующих источников, сама ничего не
+    # пишет и не открывает реестр — тот же приём, что у `auth-status`/`config`.
+    "doctor",
 }
 
 
@@ -371,6 +381,7 @@ _HANDLERS = {
     "list-calendar": cmd_list_calendar,
     "get-room": cmd_get_room,
     "migrate-to-central-store": cmd_migrate_to_central_store,
+    "doctor": cmd_doctor,
 }
 
 
