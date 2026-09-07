@@ -9,3 +9,4 @@ title: Эксплуатация
 | OPS | Процедура | Статус |
 |-----|-----------|--------|
 | [OPS-001](OPS-001-registry-migration-rollback.md) | Откат миграции реестра в централизованное хранилище ([ADR-013](../00-project/adr/ADR-013-central-transcript-store.md) §7) | Approved |
+| [OPS-002](OPS-002-single-auth-mode-transition.md) | Переход на единственный режим авторизации, снятие персонального API-ключа ([ADR-025](../00-project/adr/ADR-025-single-auth-mode.md)) | Draft |
