@@ -16,6 +16,73 @@ class TestHelpers:
         assert _format_duration(4800) == "1 ч 20 мин"
         assert _format_duration(7260) == "2 ч 1 мин"
 
+    def test_format_duration_none_returns_dash(self):
+        """ADR-026 §3 (находка issue #13, замер): значение отсутствует (`None`) —
+        не тот же исход, что «0 секунд» (уже покрыт `test_format_duration_minutes_only`).
+        Красный сегодня: `_format_duration` принимает только `int`, `None < 3600`
+        поднимает `TypeError`, не возвращает `"—"`."""
+        from ktalk_cli.formatters import _format_duration
+
+        assert _format_duration(None) == "—"
+
+
+class TestDurationNoneVsZero:
+    """ADR-026 §3: два РАЗНЫХ исхода — разные фикстуры, не одна с ветвлением
+    внутри теста (companion-спека, «Edge cases»)."""
+
+    def test_format_recording_without_duration_key_shows_dash_not_zero_minutes(self):
+        from ktalk_cli.formatters import format_recording
+
+        data = {
+            "key": "rec-no-duration",
+            "title": "Без длительности в ответе контура",
+            "createdDate": "2026-04-01T10:00:00Z",
+            "createdBy": {"surname": "Иванов", "firstname": "Иван"},
+            # намеренно без ключа "duration" — реальная форма ответа внутреннего контура
+        }
+
+        result = format_recording(data)
+        assert "—" in result
+        assert "0 мин" not in result
+
+    def test_format_recording_with_duration_zero_still_shows_zero_minutes(self):
+        """Регрессия: явный `duration: 0` — валидный факт («встреча длилась 0 секунд»),
+        не путается с отсутствием значения."""
+        from ktalk_cli.formatters import format_recording
+
+        data = {
+            "key": "rec-zero-duration",
+            "title": "Явный ноль",
+            "createdDate": "2026-04-01T10:00:00Z",
+            "createdBy": {"surname": "Иванов", "firstname": "Иван"},
+            "duration": 0,
+        }
+
+        result = format_recording(data)
+        assert "0 мин" in result
+
+    def test_format_recordings_list_without_duration_key_shows_dash_not_zero_minutes(self):
+        from ktalk_cli.formatters import format_recordings_list
+
+        data = {
+            "recordings": [
+                {
+                    "id": "rec-no-duration",
+                    "title": "Без длительности",
+                    "createdDate": "2026-04-01T10:00:00Z",
+                    "createdBy": {"surname": "Иванов", "firstname": "Иван"},
+                    "roomName": "standup",
+                    # без ключа "duration"
+                }
+            ],
+            "nextPageToken": None,
+            "prevPageToken": None,
+        }
+
+        result = format_recordings_list(data)
+        assert "—" in result
+        assert "0 мин" not in result
+
     def test_format_timestamp_millis(self):
         from ktalk_cli.formatters import _format_timestamp
 
