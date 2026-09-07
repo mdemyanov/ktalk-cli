@@ -37,6 +37,9 @@ class HostConfig:
     directories: dict = field(default_factory=dict)
     routing: dict = field(default_factory=dict)
     integrations: dict = field(default_factory=dict)
+    # FR-48: путь найденного файла — `doctor` и `config show` обязаны называть
+    # один и тот же путь одним значением, не пересчитывать его дважды.
+    path: Path | None = field(default=None)
 
 
 def _validate_string_map(section_name: str, section: dict, path: Path) -> None:
@@ -97,6 +100,7 @@ def load_host_config(path: str | Path) -> HostConfig:
         directories=directories,
         routing=routing,
         integrations=integrations,
+        path=Path(path),
     )
 
 

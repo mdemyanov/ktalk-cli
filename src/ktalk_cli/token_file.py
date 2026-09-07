@@ -63,6 +63,20 @@ def read_token() -> str | None:
     return token or None
 
 
+def status_payload() -> dict:
+    """Путь/права/пригодность файла токена одним словарём — единственная точка
+    сборки, которую переиспользуют `cli_token.py::_cmd_status` и `cli_doctor.py`
+    (ADR-026 spec §2: значение совпадает буквальным переиспользованием кода, не
+    соглашением между двумя независимо написанными местами)."""
+    mode = file_mode()
+    return {
+        "path": str(token_path()),
+        "present": mode is not None,
+        "mode": mode,
+        "usable": read_token() is not None,
+    }
+
+
 def write_token(value: str) -> Path:
     """Пишет токен с правами `0600` в каталоге `0700` и возвращает путь.
 

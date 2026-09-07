@@ -49,16 +49,11 @@ def _cmd_set(args: argparse.Namespace) -> int:
 
 
 def _cmd_status(args: argparse.Namespace) -> int:
-    path = token_file.token_path()
-    mode = token_file.file_mode()
+    payload = token_file.status_payload()
+    path = payload["path"]
+    mode = payload["mode"]
     token = token_file.read_token()
-    present = mode is not None
-    payload = {
-        "path": str(path),
-        "present": present,
-        "mode": mode,
-        "usable": token is not None,
-    }
+    present = payload["present"]
 
     if args.json:
         print(json.dumps(payload, ensure_ascii=False))
