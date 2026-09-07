@@ -37,22 +37,9 @@ def base_url():
     return "https://test.ktalk.ru"
 
 
-def test_build_download_url_quotes_space_correctly():
-    """Регрессия зонда Ф-7: пробел в имени качества ломает наивную сборку URL
-    (`InvalidURL: URL can't contain control characters`) — build_download_url обязан
-    квотировать корректно."""
-    from ktalk_cli.download import build_download_url
-
-    url = build_download_url("REC-DL-001", "900 p")
-    assert " " not in url
-
-
-def test_ac_fr7_2_quality_with_and_without_space_produce_same_url():
-    """AC FR-7/2: `900p` и `900 p` не приводят к ошибке построения запроса и дают
-    одинаковый корректно закодированный URL (нормализация имени качества)."""
-    from ktalk_cli.download import build_download_url
-
-    assert build_download_url("REC-DL-001", "900p") == build_download_url("REC-DL-001", "900 p")
+# `build_download_url` (FR-7 AC-2, кодирование имени качества под снятым режимом
+# ключа) удалена ADR-025 как мёртвый код — единственный (session) путь всегда
+# берёт готовую ссылку из `qualities[].fileUrl`, URL не строится вручную.
 
 
 async def test_ac_fr7_3_unknown_quality_gives_readable_message_with_available_list(
@@ -99,46 +86,10 @@ async def test_download_refuses_to_follow_dangling_symlink_at_target_path(
     assert not outside.exists()
 
 
-# --- Code review (epic-capability-pairing, DEV-003), находка Р3 --------------------------
-
-
-async def test_r3_apikey_mode_does_not_validate_quality_against_available_list(
-    httpx_mock: HTTPXMock, base_url, tmp_path
-):
-    """FR-7 AC-3 в исходной (широкой) формулировке требует читаемый отказ на любое
-    незапрошенное качество, без оговорки про режим авторизации. Под api-key
-    `download_recording_file` (`download.py:69-76`) не вызывает никакой валидации —
-    запрошенное значение уходит в URL как есть, и клиент получает сырой ответ сети,
-    а не `QualityNotFoundError`.
-
-    Открытый вопрос SA (`download.py:5-6`, `client-modules-spec.md` §3 «Ошибка
-    "качества нет в списке"»): api-key-ответ `get_recording()`
-    (`TalkDomainConferenceRecording`) не несёт поля `qualities[]` вовсе — списка,
-    с которым сверять, взять неоткуда на этом API-поверхности. Решение волны
-    (см. `openspec/specs/recording-data-access/spec.md`, сценарий сужен до
-    session-режима): под api-key запрошенное качество используется как есть — это
-    зафиксированное ограничение, требующее подтверждения SA, не тихая функция."""
-    from ktalk_cli.client import KTalkClient
-    from ktalk_cli.download import download_recording_file
-
-    # Сеть отвечает на ЛЮБОЙ путь (в т.ч. с несуществующим именем качества в URL) —
-    # под api-key нет предварительного запроса за деталями записи, есть только
-    # прямой запрос файла.
-    httpx_mock.add_response(content=b"payload")
-
-    target = tmp_path / "out.bin"
-    async with KTalkClient(base_url=base_url, personal_api_key="key-1") as client:
-        result = await download_recording_file(
-            client, "REC-DL-001", str(target), "definitely-not-an-available-quality"
-        )
-
-    # Задокументированное поведение волны: запрос ушёл в сеть с качеством как есть,
-    # без отказа до сети и без сверки со списком доступных (список недоступен на
-    # этой API-поверхности) — не считается регрессией, пока сценарий явно сужен.
-    assert result["quality"] == "definitely-not-an-available-quality"
-    sent = httpx_mock.get_requests()
-    assert len(sent) == 1
-    assert "definitely-not-an-available-quality" in str(sent[0].url)
+# Code review Р3 (epic-capability-pairing, DEV-003): «под api-key `download_
+# recording_file` не валидирует качество» — сам предмет снят ADR-025 вместе с
+# api-key-веткой `download.py`; единственный (session) путь всегда сверяет
+# запрошенное качество со списком `qualities[]` (см. test_ac_fr7_3 выше).
 
 
 async def test_ac_fr7_4_download_streams_to_disk_without_full_content_response(

@@ -43,7 +43,7 @@ from ktalk_cli.cli_token import register_subparsers as register_token_subparsers
 from ktalk_cli.cli_store import cmd_migrate_to_central_store
 from ktalk_cli.cli_store import register_subparsers as register_store_subparsers
 from ktalk_cli.cli_sync import cmd_auth_status, cmd_sync
-from ktalk_cli.config import redact_secrets, resolve_db_path
+from ktalk_cli.config import redact_secrets, resolve_db_path, warn_if_legacy_key_present
 from ktalk_cli.host_config import HostConfig, discover_host_config
 from ktalk_cli.registry import Registry, migrate_from_vault, render_markdown_mirror
 
@@ -375,6 +375,9 @@ _HANDLERS = {
 
 
 def main(argv: list[str] | None = None) -> int:
+    # FR-43: обнаружение снятой KTALK_PERSONAL_API_KEY не проходит молча — ровно
+    # одна строка на процесс, до диспетчеризации любой команды.
+    warn_if_legacy_key_present()
     parser = build_parser()
     args = parser.parse_args(argv)
     if getattr(args, "version", False):

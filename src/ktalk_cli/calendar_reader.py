@@ -89,7 +89,7 @@ class CalendarReadResult:
 async def _fetch_segment(
     client: KTalkClient, seg_start: date, seg_end: date, room_name: str | None
 ) -> tuple[list[dict], bool]:
-    profile = client._profile_for("get_calendar")  # noqa: SLF001 - fail-closed (api-key)
+    profile = client._profile_for("get_calendar")  # noqa: SLF001
     # ADR-017 п.1-2: сервер держит `end` полуоткрытой ([start 00:00, end 00:00),
     # Ф-60 RES-004) — сегментация (`split_window`) оперирует включительными датами,
     # компенсация исключающей границы сервера — обязанность этого тонкого слоя.
@@ -117,7 +117,7 @@ async def _fetch_segment(
         raise AssertionError("недостижимо")  # diagnose_undocumented_failure всегда поднимает
 
     try:
-        client._classify(response, profile.required_scope)  # noqa: SLF001
+        client._classify(response)  # noqa: SLF001
     except TRANSIENT_ERRORS as exc:
         await diagnose_undocumented_failure(client, "get_calendar", exc)
         raise  # недостижимо

@@ -108,13 +108,12 @@ def test_settings_reads_token_file_when_env_empty(monkeypatch, tmp_path):
     monkeypatch.delenv("KTALK_SESSION_TOKEN", raising=False)
     monkeypatch.delenv("KTALK_PERSONAL_API_KEY", raising=False)
     monkeypatch.chdir(tmp_path)  # чтобы не подхватился .env репозитория
-    from ktalk_cli.config import AuthMode, Settings
+    from ktalk_cli.config import Settings
     from ktalk_cli.token_file import write_token
 
     write_token("oMGQT83CGEO38F6y7rsL")
 
     settings = Settings()
-    assert settings.auth_mode is AuthMode.SESSION
     assert settings.auth_credential == "oMGQT83CGEO38F6y7rsL"
 
 
@@ -129,20 +128,6 @@ def test_env_session_token_wins_over_file(monkeypatch, tmp_path):
     write_token("fileFILE0123456789")
 
     assert Settings().auth_credential == "from-env"
-
-
-def test_personal_api_key_wins_over_file(monkeypatch, tmp_path):
-    """ADR-003: ключ старше сессии, откуда бы сессия ни пришла."""
-    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
-    monkeypatch.delenv("KTALK_TOKEN_FILE", raising=False)
-    monkeypatch.delenv("KTALK_SESSION_TOKEN", raising=False)
-    monkeypatch.setenv("KTALK_PERSONAL_API_KEY", "personal-key")
-    from ktalk_cli.config import AuthMode, Settings
-    from ktalk_cli.token_file import write_token
-
-    write_token("fileFILE0123456789")
-
-    assert Settings().auth_mode is AuthMode.API_KEY
 
 
 def test_token_from_file_is_masked_in_error_text(monkeypatch, tmp_path):

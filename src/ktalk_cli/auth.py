@@ -13,29 +13,19 @@
 
 from __future__ import annotations
 
-import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from ktalk_cli.config import AuthMode, KTalkConfigError
+from ktalk_cli.config import KTalkConfigError
 from ktalk_cli.endpoints import (  # noqa: F401 - реэкспорт публичного контракта модуля
     OPERATION_LABELS,
     OPERATION_PROFILES,
     EndpointProfile,
     quote_path_param,
 )
-from ktalk_cli.pagination import paginate_pages, skip_pages
 
 if TYPE_CHECKING:
     from ktalk_cli.client import KTalkClient
-
-logger = logging.getLogger(__name__)
-
-SCOPE_LABELS = {
-    "application.recording.read": "Записи (только чтение)",
-    "application.reporting.read": "Отчётность (только чтение)",
-    "application.applications.read": "Информация по API-ключам (только чтение)",
-}
 
 
 class KTalkError(Exception):
@@ -71,37 +61,21 @@ def _auth_error(message: str, status_code: int, cls: type[KTalkAuthError] = KTal
     return exc
 
 
-def classify_response(
-    mode: AuthMode, response: object, required_scope: str | None
-) -> None:
+def classify_response(response: object) -> None:
     """Вынесено из `KTalkClient._classify` (гейт C13) — не зависит от `self`, только
-    от режима, статус-кода и требуемого scope. ADR-003: коды 401/403 разводятся по
-    смыслу (истёк vs. запрещён), ADR-008: код ответа — атрибут `status_code` на
-    исключении, читает `contour_diagnostics._status_hint`."""
+    от статус-кода. ADR-025: единственный оставшийся режим — сессия, `mode`/
+    `required_scope` сняты из сигнатуры (scope — понятие ключа, у сессии его нет).
+    ADR-008: код ответа — атрибут `status_code` на исключении, читает
+    `contour_diagnostics._status_hint`."""
     status = response.status_code  # type: ignore[attr-defined]
     if status == 401:
-        if mode is AuthMode.API_KEY:
-            raise _auth_error(
-                "Ключ авторизации истёк или невалиден. "
-                "Обновите KTALK_PERSONAL_API_KEY (см. README).",
-                401,
-            )
         raise _auth_error(
             "Токен сессии истёк или невалиден. Обновите его: `ktalk token set -` (или переменную KTALK_SESSION_TOKEN, если она задана) — см. README.", 401
         )
     if status == 403:
-        if mode is AuthMode.API_KEY:
-            if required_scope:
-                label = SCOPE_LABELS.get(required_scope, required_scope)
-                raise _auth_error(
-                    f"Ключу не хватает разрешения «{label}» ({required_scope}). "
-                    "Добавьте его ключу в настройках Толка (администратор домена).",
-                    403,
-                    KTalkScopeError,
-                )
-            raise _auth_error("Доступ запрещён. Обратитесь к администратору Толка.", 403)
-        # Session-режим: у токена нет понятия scope, но 403 — это не 401. Раньше оба
-        # кода давали одно сообщение «токен истёк» — ADR-003 разводит их по смыслу.
+        # У сессионного токена нет понятия scope, но 403 — это не 401. ADR-003
+        # развела коды по смыслу (истёк vs. запрещён), ADR-025 убрала второй,
+        # ключевой, силуэт того же кода — остался один текст.
         raise _auth_error(
             "Доступ запрещён: у текущей сессии нет прав на эту операцию. "
             "Токен при этом рабочий — обновлять его не нужно.",
@@ -115,28 +89,21 @@ def classify_response(
 
 @dataclass(frozen=True)
 class AuthContext:
-    """Неизменяемая пара (режим, credential) — вычисляется один раз."""
+    """Неизменяемая обёртка credential — вычисляется один раз (ADR-025: поле
+    `mode` снято, второго режима для сравнения больше нет)."""
 
-    mode: AuthMode
     credential: str
 
     def __repr__(self) -> str:  # NFR-5: значение секрета никогда не в repr
-        return f"AuthContext(mode={self.mode!r}, credential='***')"
+        return "AuthContext(credential='***')"
 
     @staticmethod
-    def resolve(*, session_token: str | None, personal_api_key: str | None) -> AuthContext:
-        if personal_api_key:
-            if session_token:
-                logger.warning(
-                    "Заданы обе переменные — используется KTALK_PERSONAL_API_KEY, "
-                    "KTALK_SESSION_TOKEN игнорируется."
-                )
-            return AuthContext(AuthMode.API_KEY, personal_api_key)
+    def resolve(*, session_token: str | None) -> AuthContext:
         if session_token:
-            return AuthContext(AuthMode.SESSION, session_token)
+            return AuthContext(session_token)
         raise KTalkConfigError(
-            "Не задана ни KTALK_PERSONAL_API_KEY, ни KTALK_SESSION_TOKEN. "
-            "Укажите одну из переменных (см. README)."
+            "Не задана KTALK_SESSION_TOKEN, и файла токена нет. Задайте "
+            "переменную или выполните `ktalk token set -` (см. README)."
         )
 
 
@@ -181,11 +148,12 @@ def normalize_list_apikey(raw: dict) -> NormalizedPage:
 
 @dataclass
 class AuthStatus:
-    """Результат диагностики активного механизма авторизации (FR-11)."""
+    """Результат диагностики сессионного токена (FR-11, ADR-025 п.3).
+
+    `scopes`/`expired_at` сняты — понятия ключа, у сессии их нет; постоянный
+    `null` неотличим от «пока не реализовано» (ADR-025 «Альтернативы»)."""
 
     alive: bool
-    scopes: list[dict] | None
-    expired_at: str | None
     note: str | None
 
 
@@ -235,25 +203,6 @@ def merge_participants(*groups: list[dict]) -> list[dict]:
             seen.add(key)
             merged.append(normalize_participant(raw))
     return merged
-
-
-async def full_participants_apikey(client: KTalkClient, recording_key: str) -> dict:
-    """Api-key-ветка `KTalkClient.get_full_participants` — вынесена сюда ради гейта
-    C13 (объём client.py); использует "приватные" коллаборирующие атрибуты клиента
-    осознанно, оба модуля — одна логическая единица (ADR-003)."""
-    profile = client._profile_for("get_participants_full")  # noqa: SLF001
-
-    async def raw_fetch(skip: int, top: int) -> dict:
-        path = profile.path_template.format(key=quote_path_param(recording_key))
-        response = await client._client.get(path, params={"skip": skip, "top": top})  # noqa: SLF001
-        client._classify(response, profile.required_scope)  # noqa: SLF001
-        return response.json()
-
-    fetch_page = skip_pages(raw_fetch, page_size=100, items_key="entities")
-    out: list[dict] = []
-    async for page in paginate_pages(fetch_page):
-        out.extend(normalize_participant(p) for p in page)
-    return {"participants": out, "incomplete": False}
 
 
 async def resolve_chat_channel(client: KTalkClient, conference_key: str) -> str:
