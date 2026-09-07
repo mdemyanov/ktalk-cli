@@ -1,0 +1,40 @@
+sequenceDiagram
+    participant Caller as "Caller (промт-слой плагина)"
+    participant Doctor as "cli_doctor.py::cmd_doctor"
+    participant Version as "__version__/__dist_name__"
+    participant TokenFile as "token_file.status_payload()"
+    participant Client as "KTalkClient.get_auth_status()"
+    participant Settings as "Settings().ktalk_base_url"
+    participant HostConfig as "host_config.discover_host_config()"
+
+    Caller->>Doctor: "doctor --json [--expect-min-version]"
+    Doctor->>Version: "installed"
+    Version-->>Doctor: "версия, сравнение с --expect-min-version, если передан"
+
+    Doctor->>TokenFile: "status_payload()"
+    TokenFile-->>Doctor: "{path, present, mode, usable}"
+
+    Note over Doctor,Client: "Сетевой вызов один - тот же, что у отдельной auth-status (ADR-025)"
+    Doctor->>Client: "get_auth_status()"
+    alt credential вовсе не задан
+        Client-->>Doctor: "KTalkConfigError (до сети)"
+    else пробный запрос выполнен
+        Client-->>Doctor: "AuthStatus{alive, note}"
+    end
+
+    Doctor->>Settings: "ktalk_base_url"
+    Settings-->>Doctor: "адрес + источник (env KTALK_BASE_URL либо default)"
+
+    Doctor->>HostConfig: "discover_host_config()"
+    alt найден
+        HostConfig-->>Doctor: "HostConfig(path=...)"
+    else отсутствует
+        Note right of HostConfig: "Отсутствие .ktalk.toml - не отказ (NFR-23)"
+        HostConfig-->>Doctor: "None"
+    else повреждён
+        HostConfig-->>Doctor: "HostConfigError(path, причина)"
+    end
+
+    Doctor->>Doctor: "собрать 5 пунктов, вычислить failed_items"
+    Note right of Doctor: "exit != 0 тогда и только тогда, когда хотя бы один пункт<br/>действительно провален: token_file.usable=false,<br/>auth.alive=false, host_config=malformed,<br/>или version.meets_expectation=false"
+    Doctor-->>Caller: "JSON-отчёт + код возврата"
