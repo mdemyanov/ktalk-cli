@@ -33,8 +33,14 @@ def render_tool_output(data: dict, fmt: str, formatter, **kwargs) -> str:
     return formatter(data, **kwargs)
 
 
-def _format_duration(seconds: int) -> str:
-    """Format duration in seconds to human-readable Russian string."""
+def _format_duration(seconds: int | None) -> str:
+    """Format duration in seconds to human-readable Russian string.
+
+    ADR-026 §3 (issue #13): `None` — значение отсутствует в ответе контура,
+    отличается от «длилось 0 секунд». Тихий дефолт `0` у вызывающего кода
+    выдавал отсутствие данных за наблюдаемый факт — запрещено NFR-9."""
+    if seconds is None:
+        return "—"
     if seconds < 3600:
         minutes = max(seconds // 60, 0 if seconds == 0 else 1)
         return f"{minutes} мин"
@@ -134,7 +140,7 @@ def format_recording(data: dict) -> str:
     if room:
         lines.append(f"- **Комната:** {room}")
 
-    lines.append(f"- **Длительность:** {_format_duration(data.get('duration', 0))}")
+    lines.append(f"- **Длительность:** {_format_duration(data.get('duration'))}")
 
     participants = data.get("participants", [])
     count = data.get("participantsCount", len(participants))
@@ -169,7 +175,7 @@ def format_recordings_list(data: dict) -> str:
         author_name = _format_user_name_from_user(created_by)
         author_id = created_by.get("key") or created_by.get("login") or ""
         author = f"{author_name} ({author_id})" if author_id else author_name
-        duration = _format_duration(rec.get("duration", 0))
+        duration = _format_duration(rec.get("duration"))
         participants_list = rec.get("participants") or []
         if participants_list:
             names = [_format_user_name(p, with_id=True) for p in participants_list]
