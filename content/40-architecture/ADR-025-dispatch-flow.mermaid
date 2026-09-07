@@ -1,0 +1,29 @@
+sequenceDiagram
+    participant Caller as "Caller (CLI-команда)"
+    participant Settings as "Settings"
+    participant Client as "KTalkClient"
+    participant Profile as "OPERATION_PROFILES[op]"
+    participant API as "KTalk API"
+
+    Caller->>Settings: auth_credential
+    Note over Settings: "KTALK_SESSION_TOKEN -> файл ~/.config/ktalk-mcp/token -><br/>ошибка конфигурации『KTALK_SESSION_TOKEN не задан』;<br/>KTALK_PERSONAL_API_KEY в разрешении не участвует вовсе"
+    Note over Caller: "Однократное предупреждение о KTALK_PERSONAL_API_KEY -<br/>печатается один раз в cli.py::main() до диспетчеризации,<br/>не на этом пути"
+    Caller->>Client: call(operation, params)
+    Client->>Profile: profile = table[operation]
+
+    alt profile is None
+        Client-->>Caller: "OperationNotAvailableError『операция недоступна - рабочего пути под сессионным токеном нет』(пример - list_archive)"
+    else profile найден
+        Client->>API: GET profile.path
+        Note right of Client: "Единственный транспорт - query sessionToken=...;<br/>заголовка X-Auth-Token больше нет"
+        API-->>Client: HTTP response 200/401/403/404/...
+
+        alt status == 401
+            Client-->>Caller: "KTalkAuthError『токен сессии истёк - обновите ktalk token set -』"
+        else status == 403
+            Client-->>Caller: "KTalkAuthError『доступ запрещён - токен рабочий』(понятия scope больше нет)"
+        else status == 200
+            Client->>Client: "profile.normalizer(response.json())"
+            Client-->>Caller: normalized result
+        end
+    end
