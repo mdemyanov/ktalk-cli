@@ -13,9 +13,9 @@ import sys
 from datetime import date, timedelta
 
 from ktalk_cli.client import AuthStatus, KTalkClient, KTalkError
-from ktalk_cli.config import AuthMode, KTalkConfigError, Settings, redact_secrets
+from ktalk_cli.config import KTalkConfigError, Settings, redact_secrets
 from ktalk_cli.enrichment import enrich_batch, map_participants
-from ktalk_cli.pagination import clip_to_window, paginate_pages, skip_pages, token_pages
+from ktalk_cli.pagination import clip_to_window, paginate_pages, skip_pages
 from ktalk_cli.reconciliation import dry_run_report, recording_ids
 from ktalk_cli.registry import Registry, recording_fields_from_api
 
@@ -43,20 +43,11 @@ async def _fetch_recordings(
     start_from = _window_start(days)
     out: list[dict] = []
     async with KTalkClient.from_settings(settings) as client:
-        if settings.auth_mode is AuthMode.API_KEY:
 
-            async def raw_fetch_token(token: str | None) -> dict:
-                return await client.list_recordings(
-                    start_from=start_from, top=100, page_token=token
-                )
+        async def raw_fetch_skip(skip: int, top: int) -> dict:
+            return await client.list_recordings(start_from=start_from, top=top, skip=skip)
 
-            fetch_page = token_pages(raw_fetch_token)
-        else:
-
-            async def raw_fetch_skip(skip: int, top: int) -> dict:
-                return await client.list_recordings(start_from=start_from, top=top, skip=skip)
-
-            fetch_page = skip_pages(raw_fetch_skip, page_size=100)
+        fetch_page = skip_pages(raw_fetch_skip, page_size=100)
 
         # Окно дат держит клиент: API игнорирует startFrom (Ф-15). Обход
         # прекращается на первой странице, вышедшей за порог — выдача
@@ -150,20 +141,14 @@ def cmd_auth_status(reg: Registry, args) -> int:
     except _AUTH_ERRORS as exc:
         print(redact_secrets(str(exc)), file=sys.stderr)
         return 1
-    data = {
-        "alive": status.alive,
-        "scopes": status.scopes,
-        "expired_at": status.expired_at,
-        "note": status.note,
-    }
+    # FR-44: отказ пробного запроса — часть результата диагностики, не сбой самой
+    # команды. Оба канала, которыми потребитель может прочитать отказ, обязаны
+    # сигналить его независимо: `alive` в теле ответа И код возврата процесса.
+    data = {"alive": status.alive, "note": status.note}
     if args.json:
         _print_json(data)
-        return 0
+        return 0 if status.alive else 1
     print(f"alive: {status.alive}")
-    if status.scopes is not None:
-        print(f"scopes: {status.scopes}")
-    if status.expired_at is not None:
-        print(f"expired_at: {status.expired_at}")
     if status.note:
         print(f"note: {status.note}")
-    return 0
+    return 0 if status.alive else 1

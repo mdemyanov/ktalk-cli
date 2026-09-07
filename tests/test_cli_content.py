@@ -214,17 +214,21 @@ def test_download_recording_json_valid_and_writes_file(httpx_mock: HTTPXMock, ca
 
 
 @pytest.mark.httpx_mock(assert_all_responses_were_requested=False)
-def test_list_archive_json_valid(httpx_mock: HTTPXMock, capsys, monkeypatch):
-    from ktalk_cli.cli import main
+def test_list_archive_refuses_before_network_call(httpx_mock: HTTPXMock, capsys, monkeypatch):
+    """ADR-025 п.4: `list-archive` остаётся вызываемой командой, но архив никогда
+    не имел рабочего пути под сессией (замер, personal-api-key.md FR-6/FR-9) —
+    после снятия ключа отказывает громко и до сети на КАЖДЫЙ вызов, не притворяется
+    успехом (было rc=0/пустой список под снятым режимом ключа)."""
+    monkeypatch.setenv("KTALK_SESSION_TOKEN", "sess-1")
+    monkeypatch.delenv("KTALK_PERSONAL_API_KEY", raising=False)
 
-    monkeypatch.setenv("KTALK_PERSONAL_API_KEY", "test-personal-api-key-0001")
-    httpx_mock.add_response(json={"conferences": []})
+    from ktalk_cli.cli import main
 
     rc = main(["list-archive", "--from", "2026-01-01", "--to", "2026-01-07", "--json"])
 
-    assert rc == 0
-    out = json.loads(capsys.readouterr().out)
-    assert out == []
+    assert rc == 1
+    assert httpx_mock.get_requests() == []
+    assert "архив" in capsys.readouterr().err
 
 
 # --- get-chat-messages --------------------------------------------------------------------------

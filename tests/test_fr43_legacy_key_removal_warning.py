@@ -56,27 +56,27 @@ def test_fr43_2_warning_printed_once_not_per_request_multi_request_sync(
     """Scenario «The warning fires once per invocation, not once per request»:
     `sync` с пагинацией (2 HTTP-запроса за вызов) -> предупреждение всё равно одно.
 
-    Фикстура — в форме api-key-пагинации (`entities`/`nextPageToken`), потому что
-    СЕГОДНЯ (до FR-42) ключ ещё побеждает по приоритету, и именно эта ветка реально
-    уйдёт в сеть дважды. После реализации FR-42 диспетчер всегда идёт по сессии
-    (`skip`-пагинация, форма `{"recordings": [...]}`) — Dev обязан заменить форму
-    фикстуры на session-пагинацию (полная страница `top` записей + пустая страница),
-    иначе тест перестанет создавать более одного запроса не по вине FR-43."""
+    Фикстура — session-пагинация (`skip`, форма `{"recordings": [...]}`, ADR-025
+    сняла api-key-ветку `entities`/`nextPageToken` целиком): полная страница из
+    `page_size=100` записей (`pagination.skip_pages`) заставляет обход запросить
+    вторую, пустую страницу — ровно 2 HTTP-запроса за вызов."""
     monkeypatch.setenv("KTALK_BASE_URL", "https://test.ktalk.ru")
     monkeypatch.setenv("KTALK_PERSONAL_API_KEY", "pk-legacy-2")
     monkeypatch.setenv("KTALK_SESSION_TOKEN", "sess-active-warn-0002")
     monkeypatch.delenv("KTALK_REGISTRY_DB", raising=False)
 
     today = date.today().isoformat()
-    httpx_mock.add_response(
-        json={
-            "entities": [
-                {"id": "r1", "title": "T", "createdDate": f"{today}T10:00:00Z", "duration": 60}
-            ],
-            "nextPageToken": "page-2",
+    full_page = [
+        {
+            "id": f"r{i}",
+            "title": "T",
+            "createdDate": f"{today}T10:00:00Z",
+            "duration": 60,
         }
-    )
-    httpx_mock.add_response(json={"entities": [], "nextPageToken": None})  # конец пагинации
+        for i in range(100)
+    ]
+    httpx_mock.add_response(json={"recordings": full_page})
+    httpx_mock.add_response(json={"recordings": []})  # конец пагинации
 
     from ktalk_cli.cli import main
 

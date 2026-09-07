@@ -62,8 +62,8 @@ def test_ac_fr15_2_dry_run_mismatch_blocks_sync_without_confirmation(
     api-key-режиме не выполняется автоматически без осознанного решения оператора
     (--dry-run сигнализирует расхождение через ненулевой код возврата)."""
     monkeypatch.setenv("KTALK_BASE_URL", "https://test.ktalk.ru")
-    monkeypatch.setenv("KTALK_PERSONAL_API_KEY", "pk-1")
-    monkeypatch.delenv("KTALK_SESSION_TOKEN", raising=False)
+    monkeypatch.setenv("KTALK_SESSION_TOKEN", "sess-1")
+    monkeypatch.delenv("KTALK_PERSONAL_API_KEY", raising=False)
     monkeypatch.delenv("KTALK_REGISTRY_DB", raising=False)
 
     from ktalk_cli.registry import Registry
@@ -77,14 +77,14 @@ def test_ac_fr15_2_dry_run_mismatch_blocks_sync_without_confirmation(
 
     httpx_mock.add_response(
         json={
-            "entities": [
+            "recordings": [
                 {"id": "NEW-1", "key": "NEW-1", "title": "Другая запись",
                  "createdDate": f"{_INSIDE_WINDOW}T00:00:00Z", "duration": 60,
                  "participantsCount": 0, "participants": []},
             ],
-            "nextPageToken": None,
         }
     )
+    httpx_mock.add_response(json={"recordings": []})
 
     from ktalk_cli.cli import main
 
@@ -106,8 +106,8 @@ def test_ac_fr15_3_dry_run_full_match_allows_proceeding(
     """AC FR-15/3: сухой прогон подтвердил полное совпадение id -> сигнал "можно
     продолжать" (нулевой код возврата), обычная синхронизация может выполняться."""
     monkeypatch.setenv("KTALK_BASE_URL", "https://test.ktalk.ru")
-    monkeypatch.setenv("KTALK_PERSONAL_API_KEY", "pk-1")
-    monkeypatch.delenv("KTALK_SESSION_TOKEN", raising=False)
+    monkeypatch.setenv("KTALK_SESSION_TOKEN", "sess-1")
+    monkeypatch.delenv("KTALK_PERSONAL_API_KEY", raising=False)
     monkeypatch.delenv("KTALK_REGISTRY_DB", raising=False)
 
     from ktalk_cli.registry import Registry
@@ -121,14 +121,14 @@ def test_ac_fr15_3_dry_run_full_match_allows_proceeding(
 
     httpx_mock.add_response(
         json={
-            "entities": [
+            "recordings": [
                 {"id": "SAME-1", "key": "SAME-1", "title": "Существующая запись",
                  "createdDate": f"{_INSIDE_WINDOW}T00:00:00Z", "duration": 60,
                  "participantsCount": 0, "participants": []},
             ],
-            "nextPageToken": None,
         }
     )
+    httpx_mock.add_response(json={"recordings": []})
 
     from ktalk_cli.cli import main
 
@@ -142,20 +142,20 @@ def test_dry_run_on_empty_registry_reports_no_data_not_silent_ok(
     """Edge case client-modules-spec: `ktalk sync --dry-run` на пустом реестре (первый
     sync вообще) — сверивать не с чем; должен явно сообщить об этом, не молчаливый OK."""
     monkeypatch.setenv("KTALK_BASE_URL", "https://test.ktalk.ru")
-    monkeypatch.setenv("KTALK_PERSONAL_API_KEY", "pk-1")
-    monkeypatch.delenv("KTALK_SESSION_TOKEN", raising=False)
+    monkeypatch.setenv("KTALK_SESSION_TOKEN", "sess-1")
+    monkeypatch.delenv("KTALK_PERSONAL_API_KEY", raising=False)
     monkeypatch.delenv("KTALK_REGISTRY_DB", raising=False)
 
     httpx_mock.add_response(
         json={
-            "entities": [
+            "recordings": [
                 {"id": "FIRST-1", "key": "FIRST-1", "title": "Первая запись",
                  "createdDate": f"{_INSIDE_WINDOW}T00:00:00Z", "duration": 60,
                  "participantsCount": 0, "participants": []},
             ],
-            "nextPageToken": None,
         }
     )
+    httpx_mock.add_response(json={"recordings": []})
 
     from ktalk_cli.cli import main
 
@@ -177,8 +177,8 @@ def test_dry_run_compares_same_window_not_whole_registry(
     записи старше окна — предохранитель, срабатывающий всегда, бесполезен.
     """
     monkeypatch.setenv("KTALK_BASE_URL", "https://test.ktalk.ru")
-    monkeypatch.setenv("KTALK_PERSONAL_API_KEY", "pk-1")
-    monkeypatch.delenv("KTALK_SESSION_TOKEN", raising=False)
+    monkeypatch.setenv("KTALK_SESSION_TOKEN", "sess-1")
+    monkeypatch.delenv("KTALK_PERSONAL_API_KEY", raising=False)
     monkeypatch.delenv("KTALK_REGISTRY_DB", raising=False)
 
     from ktalk_cli.registry import Registry
@@ -198,14 +198,14 @@ def test_dry_run_compares_same_window_not_whole_registry(
 
     httpx_mock.add_response(
         json={
-            "entities": [
+            "recordings": [
                 {"id": "SAME-1", "key": "SAME-1", "title": "Внутри окна",
                  "createdDate": f"{_INSIDE_WINDOW}T00:00:00Z", "duration": 60,
                  "participantsCount": 0, "participants": []},
             ],
-            "nextPageToken": None,
         }
     )
+    httpx_mock.add_response(json={"recordings": []})
 
     from ktalk_cli.cli import main
 

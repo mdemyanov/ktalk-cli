@@ -195,22 +195,11 @@ def test_ac_fr14_3_sync_window_over_100_records_all_present_in_registry(
         assert len(reg.list_recordings()) == 250
 
 
-# --- FR-9 AC-2: архив читается полностью за пределами одной страницы --------------------
-
-
-async def test_ac_fr9_2_archive_reads_beyond_single_page(httpx_mock: HTTPXMock, base_url):
-    """AC FR-9/2: окно дат содержит больше результатов, чем на одной странице -> клиент
-    читает архив полностью на своей стороне, не только первую страницу."""
-    httpx_mock.add_response(json=_fixture_json("archive-page1.json"))
-    httpx_mock.add_response(json=_fixture_json("archive-page2-empty.json"))
-
-    from ktalk_cli.client import KTalkClient
-
-    async with KTalkClient(base_url=base_url, personal_api_key="pk-1") as client:
-        meetings = await client.list_archive(from_date="2026-07-01", to_date="2026-07-02")
-
-    assert len(meetings) == 2
-    assert len(httpx_mock.get_requests()) == 2
+# FR-9 AC-2 (архив читается полностью за пределами одной страницы, под api-key)
+# снято ADR-025 вместе с режимом: `list_archive` никогда не имел рабочего пути под
+# сессией (замер, personal-api-key.md FR-6/FR-9) и после снятия ключа не имеет ни
+# одного — `test_ac_fr6_3_operation_without_profile_refuses_before_network_call`
+# (`test_auth_modes.py`) уже воспроизводит фактическое поведение (отказ до сети).
 
 
 # --- Нормализация: session-форма и api-key-форма -> единая внутренняя форма -------------

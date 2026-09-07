@@ -26,12 +26,15 @@ def base_url():
 
 
 async def test_secret_not_in_auth_error_message(httpx_mock: HTTPXMock, base_url):
-    """Значение ключа не появляется в тексте KTalkAuthError."""
+    """Значение сессионного токена не появляется в тексте KTalkAuthError.
+
+    ADR-025: единственный оставшийся credential — сессионный токен, миграция от
+    `personal_api_key=` (снятый параметр конструктора)."""
     from ktalk_cli.client import KTalkAuthError, KTalkClient
 
     httpx_mock.add_response(status_code=401)
 
-    async with KTalkClient(base_url=base_url, personal_api_key=SECRET) as client:
+    async with KTalkClient(base_url=base_url, session_token=SECRET) as client:
         with pytest.raises(KTalkAuthError) as exc_info:
             await client.list_recordings()
 
@@ -39,14 +42,14 @@ async def test_secret_not_in_auth_error_message(httpx_mock: HTTPXMock, base_url)
 
 
 async def test_secret_not_in_generic_exception_str_or_repr(httpx_mock: HTTPXMock, base_url):
-    """ADR-003: KTalkError строит текст из статичных строк, никогда из
+    """ADR-003/ADR-025: KTalkError строит текст из статичных строк, никогда из
     str(request.url)/request.headers — секрет не должен всплыть даже в repr исключения
     при непредвиденной сетевой ошибке."""
     from ktalk_cli.client import KTalkClient
 
     httpx_mock.add_exception(httpx.ConnectError("connection refused"))
 
-    async with KTalkClient(base_url=base_url, personal_api_key=SECRET) as client:
+    async with KTalkClient(base_url=base_url, session_token=SECRET) as client:
         with pytest.raises(Exception) as exc_info:
             await client.list_recordings()
 
@@ -60,7 +63,11 @@ def test_secret_not_in_cli_text_output(
     """Значение ключа не попадает в stdout/stderr CLI при ошибке (текстовый режим)."""
     monkeypatch.setenv("KTALK_BASE_URL", "https://test.ktalk.ru")
     monkeypatch.setenv("KTALK_PERSONAL_API_KEY", SECRET)
-    monkeypatch.delenv("KTALK_SESSION_TOKEN", raising=False)
+    # ADR-025: сама переменная больше не credential — сетевой вызов (и 401 ниже)
+    # достижим только под сессионным токеном; тест по-прежнему проверяет, что
+    # значение СНЯТОЙ переменной (SECRET) не утекает, включая её однократное
+    # предупреждение (FR-43), в присутствии рабочей сессии.
+    monkeypatch.setenv("KTALK_SESSION_TOKEN", "sess-network-reachable-0001")
     monkeypatch.delenv("KTALK_REGISTRY_DB", raising=False)
     httpx_mock.add_response(status_code=401)
 
@@ -80,7 +87,11 @@ def test_secret_not_in_cli_json_output(
     """Значение ключа не попадает в stdout/stderr CLI при ошибке, включая --json-вывод."""
     monkeypatch.setenv("KTALK_BASE_URL", "https://test.ktalk.ru")
     monkeypatch.setenv("KTALK_PERSONAL_API_KEY", SECRET)
-    monkeypatch.delenv("KTALK_SESSION_TOKEN", raising=False)
+    # ADR-025: сама переменная больше не credential — сетевой вызов (и 401 ниже)
+    # достижим только под сессионным токеном; тест по-прежнему проверяет, что
+    # значение СНЯТОЙ переменной (SECRET) не утекает, включая её однократное
+    # предупреждение (FR-43), в присутствии рабочей сессии.
+    monkeypatch.setenv("KTALK_SESSION_TOKEN", "sess-network-reachable-0001")
     monkeypatch.delenv("KTALK_REGISTRY_DB", raising=False)
     httpx_mock.add_response(status_code=401)
 
@@ -145,7 +156,11 @@ def test_secret_not_in_auth_status_cli_output(
     """`ktalk auth-status --json` (NEW команда) не утекает ключом даже на сетевой ошибке."""
     monkeypatch.setenv("KTALK_BASE_URL", "https://test.ktalk.ru")
     monkeypatch.setenv("KTALK_PERSONAL_API_KEY", SECRET)
-    monkeypatch.delenv("KTALK_SESSION_TOKEN", raising=False)
+    # ADR-025: сама переменная больше не credential — сетевой вызов (и 401 ниже)
+    # достижим только под сессионным токеном; тест по-прежнему проверяет, что
+    # значение СНЯТОЙ переменной (SECRET) не утекает, включая её однократное
+    # предупреждение (FR-43), в присутствии рабочей сессии.
+    monkeypatch.setenv("KTALK_SESSION_TOKEN", "sess-network-reachable-0001")
     monkeypatch.delenv("KTALK_REGISTRY_DB", raising=False)
     httpx_mock.add_response(status_code=401)
 
@@ -179,12 +194,8 @@ def test_secret_not_in_settings_repr_or_str(monkeypatch):
 async def test_nfr10_secret_not_in_get_room_error_message(httpx_mock: HTTPXMock, base_url):
     """Значение ключа не появляется в тексте ошибки при отказе `get_room`.
 
-    Session-режим, не api-key: по ADR-004 §2 `get_room` в api-key-режиме не имеет
-    записи профиля этой волной (`AuthMode.API_KEY: None`) — отказ там fail-closed
-    ДО сети (`OperationNotAvailableError`, см. `test_rooms.py`
-    `test_ac_fr17_3_get_room_apikey_mode_refuses_before_network_call`), замоканный
-    401 никогда не запрашивается. NFR-10 проверяется в физически достижимом
-    сценарии — там, где у операции есть профиль и сетевой вызов реально происходит.
+    Session-режим: `get_room` имеет ровно один (session) профиль в плоской таблице
+    (ADR-025) — сетевой вызов реально происходит, замоканный 401 достижим.
     """
     from ktalk_cli.client import KTalkAuthError, KTalkClient
     from ktalk_cli.rooms import get_room
@@ -202,9 +213,8 @@ async def test_nfr10_secret_not_in_get_room_error_message(httpx_mock: HTTPXMock,
 async def test_nfr10_secret_not_in_calendar_error_message(httpx_mock: HTTPXMock, base_url):
     """Значение ключа не появляется в тексте ошибки при отказе чтения календаря.
 
-    Session-режим — тот же принцип, что у `get_room` выше: `get_calendar` в
-    api-key-режиме тоже без записи профиля этой волной (ADR-004 §2), 401 туда не
-    достижим."""
+    Session-режим — тот же принцип, что у `get_room` выше: `get_calendar` имеет
+    ровно один (session) профиль (ADR-025), 401 достижим."""
     from datetime import date
 
     from ktalk_cli.calendar_reader import get_calendar_window

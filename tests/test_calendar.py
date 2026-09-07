@@ -43,11 +43,6 @@ def session_token():
     return "test-session-token"
 
 
-@pytest.fixture
-def personal_api_key():
-    return "test-personal-api-key-0001"
-
-
 def _item(item_id: str, start: str = "2026-08-15T10:00:00+03:00") -> dict:
     """Синтетический элемент календаря — минимум для теста дедупа/потолка, не полный
     20-польный маппер (тот проверяется отдельно на фикстуре)."""
@@ -349,25 +344,9 @@ def test_known_400_texts_catalog_matches_f26_dословно():
     assert "The field Take must be between 1 and 1000." in KNOWN_400_TEXTS
 
 
-# --- NFR-7: fail-closed api-key ------------------------------------------------------------
-
-
-async def test_nfr7_get_calendar_apikey_mode_refuses_before_network_call(
-    httpx_mock: HTTPXMock, base_url, personal_api_key
-):
-    """`get_calendar`/api-key остаётся «без записи» (ADR-004 п.2) несмотря на
-    наблюдавшийся живой 200 — не переносится в «рабочий» профиль этой волной.
-
-    Code review (epic-capability-pairing, Р1/Р2): `get_calendar` подтверждён только
-    под session — сообщение обязано советовать её, не ключ."""
-    from ktalk_cli.calendar_reader import get_calendar_window
-    from ktalk_cli.client import KTalkClient, OperationNotAvailableError
-
-    async with KTalkClient(base_url=base_url, personal_api_key=personal_api_key) as client:
-        with pytest.raises(OperationNotAvailableError, match="режиме сессии"):
-            await get_calendar_window(client, date(2026, 8, 1), date(2026, 8, 7))
-
-    assert httpx_mock.get_requests() == []
+# NFR-7 (fail-closed api-key на `get_calendar`) снято ADR-025 вместе с режимом:
+# `get_calendar` имеет ровно один (session) профиль в плоской таблице — сравнивать
+# с api-key-веткой больше не с чем, тест закрывал ровно снятое сравнение.
 
 
 async def test_fetch_segment_network_error_triggers_correlation_and_drift(

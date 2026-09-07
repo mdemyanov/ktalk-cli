@@ -30,7 +30,7 @@ async def search_contacts(client: KTalkClient, query: str) -> list[dict]:
     параметры вызывающего в этой волне. Автовыбора нет: 0/1/>1 совпадений —
     решение оператора остаётся снаружи (см. `formatters.format_search_contacts`).
     """
-    profile = client._profile_for("search_contacts")  # noqa: SLF001 - fail-closed до сети (api-key)
+    profile = client._profile_for("search_contacts")  # noqa: SLF001
     response = await client._client.get(  # noqa: SLF001
         profile.path_template,
         params={
@@ -40,6 +40,6 @@ async def search_contacts(client: KTalkClient, query: str) -> list[dict]:
             "includeKiosks": "true",
         },
     )
-    client._classify(response, profile.required_scope)  # noqa: SLF001
+    client._classify(response)  # noqa: SLF001
     raw = response.json()
     return [_map_candidate(c) for c in raw.get("contacts") or []]

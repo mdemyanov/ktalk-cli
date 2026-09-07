@@ -47,11 +47,6 @@ def session_token():
     return "test-session-token"
 
 
-@pytest.fixture
-def personal_api_key():
-    return "test-personal-api-key-0001"
-
-
 def _store():
     from ktalk_cli.confirmation import ConfirmationStore
 
@@ -305,34 +300,17 @@ async def test_ac_11_5_network_failure_does_not_trigger_automatic_retry_exactly_
     assert post_attempts[0].url.path == f"/api/calendar/{SIMPLE_ID}/cancel"
 
 
-# --- NFR-7: fail-closed api-key --------------------------------------------------------------
+# NFR-7 (fail-closed api-key на `cancel_meeting`) снято ADR-025 вместе с режимом:
+# плоская таблица несёт один (session) профиль, api-key-ветку сравнивать не с чем.
 
 
-async def test_nfr7_cancel_meeting_apikey_mode_refuses_before_network_call(
-    httpx_mock: HTTPXMock, base_url, personal_api_key
-):
-    """Code review (epic-capability-pairing, Р1/Р2): `cancel_meeting` подтверждён
-    только под session — сообщение обязано советовать её, не ключ."""
-    from ktalk_cli.client import KTalkClient, OperationNotAvailableError
-    from ktalk_cli.meeting_scheduling import cancel_meeting
-
-    async with KTalkClient(base_url=base_url, personal_api_key=personal_api_key) as client:
-        with pytest.raises(OperationNotAvailableError, match="режиме сессии"):
-            await cancel_meeting(client, id=SIMPLE_ID, reason="")
-
-    assert httpx_mock.get_requests() == []
-
-
-def test_operation_profiles_cancel_meeting_session_mutating_apikey_none():
+def test_operation_profiles_cancel_meeting_session_mutating():
     from ktalk_cli.auth import OPERATION_PROFILES
-    from ktalk_cli.config import AuthMode
 
     profile = OPERATION_PROFILES["cancel_meeting"]
-    session_profile = profile[AuthMode.SESSION]
-    assert session_profile is not None
-    assert session_profile.path_template == "/api/calendar/{id}/cancel"
-    assert session_profile.mutating is True
-    assert profile[AuthMode.API_KEY] is None
+    assert profile is not None
+    assert profile.path_template == "/api/calendar/{id}/cancel"
+    assert profile.mutating is True
 
 
 # --- AC-11-6: update_meeting вне периметра -> управляемый отказ, не KeyError ---------------
