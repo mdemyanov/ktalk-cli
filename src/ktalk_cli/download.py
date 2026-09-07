@@ -1,13 +1,8 @@
 """Потоковая запись видеофайла записи на диск (FR-7).
 
-Session-режим — ссылка уже готова в `qualities[].fileUrl` деталей записи.
-Api-key-режим — отдельный путь с именем качества в шаблоне (`RES-001` п.5), список
-доступных качеств под ключом взять неоткуда (открытый вопрос SA) — запрошенное
-качество используется как есть, без валидации по списку.
-
-Зонд Ф-7: имя качества расходится между режимами (`900p` без пробела в session,
-`900 p` с пробелом рекомендует спека api-key) — наивная сборка URL с пробелом
-ломается (`InvalidURL`). `build_download_url` нормализует и квотирует.
+ADR-025: единственный (сессионный) путь — ссылка уже готова в `qualities[].fileUrl`
+деталей записи. Api-key-путь (`build_download_url`, `DEFAULT_QUALITY`) удалён как
+мёртвый код вместе со снятием режима ключа.
 
 Политика записи на диск — базовый безопасный минимум (SA сознательно оставил её
 открытой, полное ревью — DevSecOps): пишем только по явно переданному пути, не
@@ -19,11 +14,6 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-from urllib.parse import quote
-
-from ktalk_cli.config import AuthMode
-
-DEFAULT_QUALITY = "900p"
 
 
 class QualityNotFoundError(Exception):
@@ -33,14 +23,6 @@ class QualityNotFoundError(Exception):
 def _normalize_quality(quality: str) -> str:
     """`900p` и `900 p` -> одна и та же каноническая форма без пробела."""
     return quality.replace(" ", "").lower()
-
-
-def build_download_url(recording_key: str, quality: str) -> str:
-    """Api-key-путь скачивания, URL-квотированный (FR-7 AC-2, зонд Ф-7)."""
-    normalized = _normalize_quality(quality)
-    key = quote(str(recording_key), safe="")
-    q = quote(normalized, safe="")
-    return f"/api/Recordings/{key}/file/{q}"
 
 
 def _resolve_session_quality(qualities: list[dict], quality: str | None) -> tuple[str, str]:
@@ -66,14 +48,8 @@ async def download_recording_file(
     overwrite: bool = False,
 ) -> dict:
     """Скачивает файл записи потоково, без буферизации целиком в памяти (FR-7 AC-4)."""
-    if client.auth_mode is AuthMode.API_KEY:
-        resolved_quality = quality or DEFAULT_QUALITY
-        url = build_download_url(recording_key, resolved_quality)
-        scope = "application.recording.read"
-    else:
-        detail = await client.get_recording(recording_key)
-        resolved_quality, url = _resolve_session_quality(detail.get("qualities") or [], quality)
-        scope = None
+    detail = await client.get_recording(recording_key)
+    resolved_quality, url = _resolve_session_quality(detail.get("qualities") or [], quality)
 
     target = Path(target_path)
     if target.exists() and not overwrite:
@@ -85,7 +61,7 @@ async def download_recording_file(
 
     total = 0
     async with client.stream("GET", url) as response:
-        client.check_response(response, scope)
+        client.check_response(response)
         # Security review SEC-001: `target.exists()` выше следует за симлинками и
         # возвращает False для «оборванного» симлинка (указывающего на
         # несуществующий путь) — наивный `target.open("wb")` в этом случае писал бы

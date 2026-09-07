@@ -12,8 +12,6 @@
 что API отдаёт заведомо неполные непоследние страницы, а недоверие отсутствующему
 полю (Ф-3) распространяется и на предположение «короткая = последняя».
 
-`token_pages` — курсорный адаптер (api-key список записей): `nextPageToken`.
-
 `clip_to_window` — клиентское окно дат (Ф-15). API игнорирует `startFrom`/`startTo`:
 зонд показал побитово одинаковую выдачу с фильтром и без него, а описания этих
 параметров у v1 и v2 в спеке вдобавок зеркальны. Поэтому окно `--days` обеспечивает
@@ -91,18 +89,5 @@ def skip_pages(
         return items, next_cursor
 
     return fetch_page
-
-
-def token_pages(
-    fetch: Callable[[str | None], Awaitable[dict]],
-    items_key: str = "entities",
-    token_key: str = "nextPageToken",
-) -> FetchPage:
-    """Строит `fetch_page` для курсорной пагинации поверх `fetch(token) -> raw_dict`."""
-
-    async def fetch_page(cursor: str | None) -> tuple[list[dict], str | None]:
-        raw = await fetch(cursor)
-        items = raw.get(items_key) or []
-        return items, raw.get(token_key) or None
 
     return fetch_page

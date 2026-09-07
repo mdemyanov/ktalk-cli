@@ -43,11 +43,6 @@ def session_token():
     return "test-session-token"
 
 
-@pytest.fixture
-def personal_api_key():
-    return "test-personal-api-key-0001"
-
-
 def _store():
     from ktalk_cli.confirmation import ConfirmationStore
 
@@ -376,22 +371,5 @@ async def test_dev007_control_call_does_not_inherit_cookie_from_failed_post(
     assert "cookie" not in control_request.headers
 
 
-# --- NFR-7: fail-closed api-key ----------------------------------------------------------
-
-
-async def test_nfr7_create_meeting_apikey_mode_refuses_before_network_call(
-    httpx_mock: HTTPXMock, base_url, personal_api_key
-):
-    """`create_meeting`/api-key не проверено вовсе ни одним сигналом -> отказ до
-    сети, тот же принцип, что `get_room`/api-key.
-
-    Code review (epic-capability-pairing, Р1/Р2): `create_meeting` подтверждён
-    только под session — сообщение обязано советовать её, не ключ."""
-    from ktalk_cli.client import KTalkClient, OperationNotAvailableError
-    from ktalk_cli.meeting_scheduling import create_meeting
-
-    async with KTalkClient(base_url=base_url, personal_api_key=personal_api_key) as client:
-        with pytest.raises(OperationNotAvailableError, match="режиме сессии"):
-            await create_meeting(client, {"subject": "X"})
-
-    assert httpx_mock.get_requests() == []
+# NFR-7 (fail-closed api-key на `create_meeting`) снято ADR-025 вместе с режимом:
+# плоская таблица несёт один (session) профиль, api-key-ветку сравнивать не с чем.

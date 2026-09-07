@@ -1,6 +1,6 @@
 [project]
 name = "ktalk-cli"
-version = "2.1.0"
+version = "3.0.0"
 description = "CLI for accessing Kontur Talk (KTalk) recordings, transcripts and summaries"
 readme = "README.md"
 license = "MIT"

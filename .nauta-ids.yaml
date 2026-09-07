@@ -35,7 +35,7 @@ namespaces:
     scope: namespace
     allocation: allocated
     populated: true
-    highwater: 24
+    highwater: 26
     graveyard: content/00-project/adr/_index.md
 
   # `ops` — дом рунбуков DevOps (ADR-023 §3, issue #7: OPS-001 использовался в 10 местах
@@ -51,7 +51,7 @@ namespaces:
     scope: namespace
     allocation: allocated
     populated: true
-    highwater: 1
+    highwater: 2
     graveyard: content/70-operations/_index.md
 
   # Дом контракта поведения требований (ADR-021, C15/C16 валидатора nauta 0.26.0). Пустой

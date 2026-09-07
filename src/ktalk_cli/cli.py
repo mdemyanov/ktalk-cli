@@ -20,6 +20,8 @@ from ktalk_cli.cli_content import (
     cmd_list_recordings,
 )
 from ktalk_cli.cli_content import register_subparsers as register_content_subparsers
+from ktalk_cli.cli_doctor import cmd_doctor
+from ktalk_cli.cli_doctor import register_subparsers as register_doctor_subparsers
 from ktalk_cli.cli_meeting import cmd_cancel_meeting_preview, cmd_create_meeting_preview
 from ktalk_cli.cli_meeting import register_subparsers as register_meeting_subparsers
 from ktalk_cli.cli_meeting_confirm import (
@@ -43,7 +45,7 @@ from ktalk_cli.cli_token import register_subparsers as register_token_subparsers
 from ktalk_cli.cli_store import cmd_migrate_to_central_store
 from ktalk_cli.cli_store import register_subparsers as register_store_subparsers
 from ktalk_cli.cli_sync import cmd_auth_status, cmd_sync
-from ktalk_cli.config import redact_secrets, resolve_db_path
+from ktalk_cli.config import redact_secrets, resolve_db_path, warn_if_legacy_key_present
 from ktalk_cli.host_config import HostConfig, discover_host_config
 from ktalk_cli.registry import Registry, migrate_from_vault, render_markdown_mirror
 
@@ -126,6 +128,7 @@ def build_parser() -> argparse.ArgumentParser:
     register_content_subparsers(sub)
     register_meetings_read_subparsers(sub)
     register_store_subparsers(sub)
+    register_doctor_subparsers(sub)
 
     return parser
 
@@ -277,6 +280,10 @@ def _host_config_to_dict(host_config: HostConfig | None) -> dict:
         "directories": host_config.directories,
         "routing": host_config.routing,
         "integrations": host_config.integrations,
+        # FR-48: `doctor` и `config show` называют один и тот же путь одним
+        # значением (ADR-026 spec §2) — ключ появляется только когда конфиг
+        # найден, отсутствие файла не путь, а нормальная ветка.
+        "path": str(host_config.path),
     }
 
 
@@ -335,6 +342,9 @@ _REGISTRY_FREE_COMMANDS = {
     # побочный эффект простого запуска команды, что противоречит NFR-12
     # ("миграция — явный шаг, без скрытых побочных эффектов").
     "migrate-to-central-store",
+    # FR-48: `doctor` агрегирует пять существующих источников, сама ничего не
+    # пишет и не открывает реестр — тот же приём, что у `auth-status`/`config`.
+    "doctor",
 }
 
 
@@ -371,10 +381,14 @@ _HANDLERS = {
     "list-calendar": cmd_list_calendar,
     "get-room": cmd_get_room,
     "migrate-to-central-store": cmd_migrate_to_central_store,
+    "doctor": cmd_doctor,
 }
 
 
 def main(argv: list[str] | None = None) -> int:
+    # FR-43: обнаружение снятой KTALK_PERSONAL_API_KEY не проходит молча — ровно
+    # одна строка на процесс, до диспетчеризации любой команды.
+    warn_if_legacy_key_present()
     parser = build_parser()
     args = parser.parse_args(argv)
     if getattr(args, "version", False):

@@ -9,7 +9,9 @@ of the `timezone` field. Source: `content/30-requirements/rooms-calendar-schedul
 FR-40, NFR-9. Cancelling or editing an existing meeting is a separate requirement
 (`ktalk-plugin-meetings.md` FR-34, a file migrating to the plugin repository) and is out of scope
 of this capability even though its implementation lives in the same package module — see the Dev
-report for this pairing task.
+report for this pairing task. The completeness of the missing-fields rejection (as opposed to
+whether a given field takes a silent default) is sourced from
+`content/30-requirements/cli-diagnostics-completeness.md` FR-47.
 
 ## Requirements
 
@@ -60,6 +62,40 @@ happen before any network call and SHALL name the specific missing field.
 
 - **WHEN** the caller explicitly passes an empty attendee list, or explicitly signals "no PIN"
 - **THEN** the request SHALL proceed on that basis, not be rejected as if the field were omitted
+
+### Requirement: Every field whose absence independently causes rejection is named together, not one at a time
+
+A rejection triggered by one or more unset fields that would each independently cause
+`MissingFieldError` (the fields covered by the no-silent-default rule above, plus the
+conditionally required `pinCode` and, when `allowAnonymous` is true,
+`anonymousAccessExpirationDate`) SHALL name every such field in that single rejection. The
+exception class and the command's exit code SHALL remain unchanged from the single-field case.
+This requirement governs the completeness of the field list only — it does not change when the
+rejection happens (still before any network call) or what class of error `timezone`'s own format
+check raises.
+
+#### Scenario: Two or more unset required fields are named in one rejection
+
+- **WHEN** a preview call omits two or more fields that would each independently cause
+  `MissingFieldError`
+- **THEN** the rejection SHALL name every one of them, not only the first encountered
+
+#### Scenario: Exactly one unset field still produces today's single-field message
+
+- **WHEN** a preview call omits exactly one such field
+- **THEN** the rejection SHALL name that field, unchanged from the pre-existing behavior
+
+#### Scenario: A format error on a present `timezone` is not folded into the missing-fields list
+
+- **WHEN** every required field is present but `timezone` fails its format check
+- **THEN** the rejection SHALL remain `TimezoneFormatError`, not be merged into or replaced by the
+  missing-fields enumeration
+
+#### Scenario: Aggregating the field list spends no network call and does not change the exit code
+
+- **WHEN** the aggregated rejection is raised
+- **THEN** it SHALL still occur before any network call, and the command's exit code SHALL be the
+  same value it returned for a single missing field
 
 ### Requirement: Recurrence and unconfirmed fields never enter the request body
 

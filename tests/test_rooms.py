@@ -35,11 +35,6 @@ def session_token():
     return "test-session-token"
 
 
-@pytest.fixture
-def personal_api_key():
-    return "test-personal-api-key-0001"
-
-
 ROOM_FIELD_NAMES = (
     "roomName",
     "sessionHalls",
@@ -105,23 +100,8 @@ def test_map_room_missing_anchor_field_raises_contour_drift():
         map_room({"sessionHalls": []})
 
 
-async def test_ac_fr17_3_get_room_apikey_mode_refuses_before_network_call(
-    httpx_mock: HTTPXMock, base_url, personal_api_key
-):
-    """AC FR-17/3: api-key-режим без подтверждённого профиля -> отказ до сетевого
-    вызова, а не запрос вслепую (ADR-004 п.2: `AuthMode.API_KEY: None` для `get_room`).
-
-    Code review (epic-capability-pairing, Р1/Р2): `get_room` подтверждён только под
-    session (`endpoints.py`) — сообщение обязано советовать включить именно сессию,
-    не ключ, которым пользователь уже пользуется."""
-    from ktalk_cli.client import KTalkClient, OperationNotAvailableError
-    from ktalk_cli.rooms import get_room
-
-    async with KTalkClient(base_url=base_url, personal_api_key=personal_api_key) as client:
-        with pytest.raises(OperationNotAvailableError, match="режиме сессии"):
-            await get_room(client, "test-room-alpha")
-
-    assert httpx_mock.get_requests() == []
+# AC FR-17/3 (fail-closed api-key на `get_room`) снято ADR-025 вместе с режимом:
+# плоская таблица несёт один (session) профиль, api-key-ветку сравнивать не с чем.
 
 
 async def test_ac_fr17_1_get_room_session_mode_happy_path(

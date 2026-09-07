@@ -30,11 +30,6 @@ def session_token():
     return "test-session-token"
 
 
-@pytest.fixture
-def personal_api_key():
-    return "test-personal-api-key-0001"
-
-
 def _candidate(key: str, surname: str, firstname: str, post: str = "") -> dict:
     return {
         "key": key,
@@ -138,20 +133,9 @@ async def test_ac_10_3_multiple_matches_returns_full_unranked_list_preserving_se
     assert [c["key"] for c in candidates] == ["668", "101", "999"]
 
 
-# --- AC-10-4: api-key fail-closed ----------------------------------------------------------
-
-
-async def test_ac_10_4_search_contacts_apikey_mode_refuses_before_network_call(
-    httpx_mock: HTTPXMock, base_url, personal_api_key
-):
-    from ktalk_cli.client import KTalkClient, OperationNotAvailableError
-    from ktalk_cli.contacts import search_contacts
-
-    async with KTalkClient(base_url=base_url, personal_api_key=personal_api_key) as client:
-        with pytest.raises(OperationNotAvailableError):
-            await search_contacts(client, FIXTURES_QUERY)
-
-    assert httpx_mock.get_requests() == []
+# AC-10-4 (api-key fail-closed на `search_contacts`) снято ADR-025 вместе с
+# режимом: плоская таблица несёт один (session) профиль, api-key-ветку сравнивать
+# не с чем.
 
 
 # --- AC-10-5: секреты не в выводе по всем веткам ------------------------------------------
@@ -212,21 +196,6 @@ async def test_ac_10_5_secret_not_in_multi_match_output(
     assert session_token not in text
 
 
-async def test_ac_10_5_secret_not_in_apikey_refusal_message(base_url, personal_api_key):
-    """Code review (epic-capability-pairing, Р1/Р2): `search_contacts` подтверждён
-    только под session (`endpoints.py`) — сообщение обязано советовать включить
-    сессию, не ключ (`match=` — иначе тест не может провалиться на неверном
-    тексте)."""
-    from ktalk_cli.client import KTalkClient, OperationNotAvailableError
-    from ktalk_cli.contacts import search_contacts
-
-    async with KTalkClient(base_url=base_url, personal_api_key=personal_api_key) as client:
-        with pytest.raises(OperationNotAvailableError, match="режиме сессии") as exc_info:
-            await search_contacts(client, FIXTURES_QUERY)
-
-    assert personal_api_key not in str(exc_info.value)
-
-
 # --- Структурные тесты: запрос, профиль, форматтер, компоновщик, реестр MCP/CLI ------------
 
 
@@ -250,14 +219,12 @@ async def test_search_contacts_sends_expected_get_request_with_fixed_top_and_fla
     assert params.get("includeKiosks") == "true"
 
 
-def test_operation_profiles_search_contacts_session_present_apikey_none():
+def test_operation_profiles_search_contacts_session_present():
     from ktalk_cli.auth import OPERATION_PROFILES
-    from ktalk_cli.config import AuthMode
 
     profile = OPERATION_PROFILES["search_contacts"]
-    assert profile[AuthMode.SESSION] is not None
-    assert profile[AuthMode.SESSION].path_template == "/api/contacts"
-    assert profile[AuthMode.API_KEY] is None
+    assert profile is not None
+    assert profile.path_template == "/api/contacts"
 
 
 def test_format_search_contacts_25_candidates_not_truncated():

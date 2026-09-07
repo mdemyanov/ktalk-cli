@@ -19,6 +19,14 @@ invocation with neither of those — an upward walk from the current working dir
 at the filesystem root. Finding no file at any of these SHALL yield "no host config", not an
 error.
 
+This capability also governs how its own discovery outcome is surfaced through the `ktalk doctor`
+aggregated report (`content/30-requirements/cli-diagnostics-completeness.md` FR-48, NFR-23): the
+config-discovery outcome (found-with-path / absent / malformed-with-cause) is the one item of that
+report this capability owns. The report's other items — package version, session-token file,
+credential liveness, workspace address — are owned by other capabilities (`talk-api-auth-modes` for
+credential liveness) or by none of the package's eight capabilities today; `doctor` reads and
+surfaces them without this capability redefining their truth.
+
 #### Scenario: An explicit override or `CLAUDE_PROJECT_DIR` is searched at its own root only
 
 - **WHEN** `project_dir` is passed explicitly, or `CLAUDE_PROJECT_DIR` is set
@@ -99,6 +107,61 @@ variable and the default, not ahead of either existing source.
 
 - **WHEN** neither `--db` nor `KTALK_REGISTRY_DB` is set, but the host config declares a path
 - **THEN** that host-config path SHALL be used, not the machine default
+
+### Requirement: `ktalk doctor` surfaces this capability's discovery outcome unchanged
+
+The `doctor` aggregated report SHALL include the host config discovery outcome using the same
+three-way vocabulary this capability already defines (found, with the path used; absent, as a
+normal branch, not an error; malformed, naming the specific cause) — `doctor` SHALL NOT introduce a
+second discovery mechanism or a different vocabulary for this item. The value SHALL agree with what
+`ktalk config show` reports for the same project.
+
+#### Scenario: An absent config is reported as a normal branch inside `doctor`, not a failure
+
+- **WHEN** `ktalk doctor` runs in a project with no `.ktalk.toml` anywhere on the search path
+- **THEN** the report's config-discovery item SHALL state absence plainly and SHALL NOT be counted
+  as a failed precondition
+
+#### Scenario: A malformed config names its cause inside `doctor`
+
+- **WHEN** `ktalk doctor` runs against a `.ktalk.toml` that fails to parse, declares an unknown
+  section, or fails a field's type check
+- **THEN** the report's config-discovery item SHALL name the specific cause, not a generic failure
+
+#### Scenario: A found config's path agrees with `config show`
+
+- **WHEN** `ktalk doctor` and `ktalk config show` run against the same project with a valid
+  `.ktalk.toml`
+- **THEN** both SHALL name the same file path as the source of the resolved configuration
+
+### Requirement: `ktalk doctor` aggregates independently owned facts into one report without a write call
+
+`doctor` SHALL run as a single command that performs no write request to Контур.Толк and mutates no
+registry state. Its exit code SHALL be non-zero if and only if at least one aggregated precondition
+is a genuine failure — an item that is merely inapplicable (for example, no `.ktalk.toml` present)
+SHALL NOT by itself make the exit code non-zero. Every aggregated item's value SHALL agree with what
+its own dedicated command (`--version`, `token status`, `auth-status`, `config show`) reports for
+the same environment; `doctor` SHALL NOT compute a different answer for a fact another surface
+already owns.
+
+#### Scenario: Every satisfied-or-inapplicable precondition yields exit code zero
+
+- **WHEN** every aggregated precondition is either satisfied or genuinely inapplicable
+- **THEN** `ktalk doctor` SHALL exit 0
+
+#### Scenario: Any genuine failure yields a non-zero exit code, independent of `--json` parsing
+
+- **WHEN** at least one aggregated precondition is a genuine failure (a malformed `.ktalk.toml`, an
+  absent or unreadable token file, a credential the live check reports as rejected)
+- **THEN** `ktalk doctor` SHALL exit with a non-zero code, and this SHALL hold even for a caller
+  that does not parse the `--json` body at all
+
+#### Scenario: Aggregated values agree with each item's own dedicated command
+
+- **WHEN** `ktalk doctor --json` and each of `--version`, `token status`, `auth-status`, `config
+  show` run against the same environment
+- **THEN** the value each dedicated command reports SHALL match the corresponding item in
+  `doctor`'s report
 
 ### Requirement: A `qmd`/participant-profile dependency is a declared fact the package exposes, not a step the package performs
 

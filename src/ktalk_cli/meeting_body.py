@@ -53,15 +53,28 @@ _FIXED = {
 }
 
 
-class MissingFieldError(KTalkError):
-    """Поле не передано явно (`None`) — отказ до сетевого вызова (NFR-9)."""
+def _missing_fields_message(fields: list[str]) -> str:
+    """FR-47: одно поле — прежняя формулировка без изменений; два и более —
+    все имена перечисляются одним отказом, не по одному за вызов."""
+    if len(fields) == 1:
+        names = f"«{fields[0]}»"
+    else:
+        names = ", ".join(f"«{f}»" for f in fields)
+    word = "Поле" if len(fields) == 1 else "Поля"
+    verb = "не передано" if len(fields) == 1 else "не переданы"
+    return (
+        f"{word} {names} {verb} явно вызывающим — запрос на создание встречи "
+        "отклонён до сетевого вызова (NFR-9)."
+    )
 
-    def __init__(self, field: str) -> None:
-        super().__init__(
-            f'Поле «{field}» не передано явно вызывающим — запрос на создание встречи '
-            "отклонён до сетевого вызова (NFR-9)."
-        )
-        self.field = field
+
+class MissingFieldError(KTalkError):
+    """Одно или несколько полей не переданы явно (`None`) — отказ до сетевого
+    вызова (NFR-9), полный список одним отказом (FR-47, issue #12)."""
+
+    def __init__(self, fields: list[str]) -> None:
+        self.fields = list(fields)
+        super().__init__(_missing_fields_message(self.fields))
 
 
 class TimezoneFormatError(KTalkError):
@@ -141,28 +154,32 @@ def build_meeting_body(
         "enableAutoRecording": enable_auto_recording,
         "allowAnonymous": allow_anonymous,
     }
-    for field in _REQUIRED:
-        if body[field] is None:
-            raise MissingFieldError(field)
+    # FR-47 (issue #12, ADR-026): все недостающие поля собираются в один список
+    # ДО первого `raise` — вызывающий получает полный список одним отказом, не
+    # по одному полю за повторный вызов. Порядок проверок (обязательность ->
+    # формат `timezone` -> условные поля) сохранён — меняется только момент,
+    # когда `_REQUIRED`-цикл поднимает исключение.
+    missing = [field for field in _REQUIRED if body[field] is None]
+    if not pin_code_explicit_none and pin_code is None:
+        missing.append("pinCode")
+    # `allow_anonymous is True` (не truthiness) — при `None` (само в missing
+    # выше) второе поле не дублируется в списке.
+    if body["allowAnonymous"] is True and anonymous_access_expiration is None:
+        missing.append("anonymousAccessExpirationDate")
+    if missing:
+        raise MissingFieldError(missing)
+
     if not _TIMEZONE_RE.match(body["timezone"]):
         raise TimezoneFormatError(body["timezone"])
 
     # ADR-009 §2: `pin_code_explicit_none=True` побеждает при одновременной
     # передаче обоих сигналов — «решено: нет PIN» перекрывает конкретное
     # значение `pin_code` (порядок не специфицирован спекой, зафиксирован здесь).
-    if pin_code_explicit_none:
-        body["pinCode"] = None
-    elif pin_code is not None:
-        body["pinCode"] = pin_code
-    else:
-        raise MissingFieldError("pinCode")
+    body["pinCode"] = None if pin_code_explicit_none else pin_code
 
-    # ADR-009 §3: `anonymousAccessExpirationDate` условно обязателен — вне
-    # общего `_REQUIRED`-цикла. `allow_anonymous=False` + значение передано —
-    # значение отбрасывается (поле неприменимо, доступ выключен), не ошибка:
-    # решение Dev по edge case, не специфицированному спекой дословно.
-    if allow_anonymous is True and anonymous_access_expiration is None:
-        raise MissingFieldError("anonymousAccessExpirationDate")
+    # ADR-009 §3: `allow_anonymous=False` + значение передано — значение
+    # отбрасывается (поле неприменимо, доступ выключен), не ошибка: решение
+    # Dev по edge case, не специфицированному спекой дословно.
     body["anonymousAccessExpirationDate"] = (
         anonymous_access_expiration if allow_anonymous else None
     )

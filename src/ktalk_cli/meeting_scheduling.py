@@ -70,7 +70,7 @@ async def create_meeting(client: KTalkClient, body: dict) -> dict:
         logger.warning("create_meeting: HTTP %s, тело: %s", response.status_code, body_text)
 
     try:
-        client._classify(response, profile.required_scope)  # noqa: SLF001
+        client._classify(response)  # noqa: SLF001
     except TRANSIENT_ERRORS as exc:
         # DEV-008: тело пустое ("") — это факт контура, отличный от "тело не
         # прикреплено вовсе" (той ветки, где ответа не было — сетевой сбой выше).
@@ -108,7 +108,7 @@ async def cancel_meeting(client: KTalkClient, *, id: str, reason: str = "") -> d
 
     body_text = response.text[:500] if response.status_code >= 400 else None
     try:
-        client._classify(response, profile.required_scope)  # noqa: SLF001
+        client._classify(response)  # noqa: SLF001
     except TRANSIENT_ERRORS as exc:
         if body_text is not None:
             exc.response_body = body_text
