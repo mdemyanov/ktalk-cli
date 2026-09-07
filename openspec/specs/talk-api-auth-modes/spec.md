@@ -2,83 +2,106 @@
 
 ## Purpose
 
-Governs how `ktalk-cli` resolves which credential authorizes a request to Контур.Толк, which
-transport carries it, how the client diagnoses an expired credential versus a credential that
-lacks a required scope, and how a caller checks the health of the active credential without
-touching the local registry. Source: `content/30-requirements/personal-api-key.md` FR-1…FR-6,
-FR-11; FR-19 of `content/30-requirements/rooms-calendar-scheduling.md` is merged here (SA
-decision, ADR-021-spec §1) — `auth-status` diagnoses the same credential this capability
-resolves, not a second contract.
+Governs how `ktalk-cli` resolves the single credential that authorizes a request to
+Контур.Толк, which transport carries it, how the client diagnoses an expired or rejected
+credential, and how a caller checks the health of the active credential without touching the
+local registry. Source: `content/30-requirements/single-auth-mode.md` FR-42…FR-44, which
+supersede `content/30-requirements/personal-api-key.md` FR-1…FR-3, FR-5 (credential-selection
+branches), and FR-11 (api-key-mode diagnosis) — the personal-API-key credential source and its
+`X-Auth-Token` transport are removed, not merely deprioritized. FR-19 of
+`content/30-requirements/rooms-calendar-scheduling.md` is merged here (SA decision,
+ADR-021-spec §1) — `auth-status` diagnoses the same credential this capability resolves, not a
+second contract.
 
 ## Requirements
 
-### Requirement: Credential resolution order and mutually exclusive transport
+### Requirement: Session token is the only credential source
 
-The client SHALL resolve exactly one active credential from, in this order: an explicit personal
-API key (`KTALK_PERSONAL_API_KEY`), a session token from the environment
-(`KTALK_SESSION_TOKEN`), a session token previously written to the local token file
-(`~/.config/ktalk-mcp/token` by default, `token_file.py`). If none of the three is present, the
-client SHALL raise a configuration error naming both environment variables and the token-file
-command, before any network call. A request SHALL carry either the `X-Auth-Token` header (personal
-key) or the `sessionToken` query parameter (session token), never both, and never a query parameter
-that is present but empty.
+The client SHALL resolve exactly one active credential from, in this order: a session token from
+the environment (`KTALK_SESSION_TOKEN`), a session token previously written to the local token
+file (`~/.config/ktalk-mcp/token` by default, `token_file.py`). A personal API key
+(`KTALK_PERSONAL_API_KEY`) SHALL NOT be read as a credential source under any condition. If
+neither the environment variable nor the file yields a value, the client SHALL raise a
+configuration error naming `KTALK_SESSION_TOKEN` and the token-file command, before any network
+call — the error message SHALL NOT mention `KTALK_PERSONAL_API_KEY`. Every request SHALL carry the
+`sessionToken` query parameter; no request SHALL carry an `X-Auth-Token` header.
 
-This order departs from `personal-api-key.md` NFR-2's two-source description (ключ → сессия →
-явная ошибка): the token file is a third source added after that requirement was written
-(`config.py::Settings._fall_back_to_token_file`), read only when both environment variables are
-empty, so an explicitly set environment variable always overrides a stale file.
+#### Scenario: Only the session token resolves, regardless of the legacy variable
 
-#### Scenario: Personal key takes priority over a session token
-
-- **WHEN** both `KTALK_PERSONAL_API_KEY` and `KTALK_SESSION_TOKEN` are set
-- **THEN** the client SHALL use the personal key exclusively — no request SHALL carry
-  `sessionToken`, in query or elsewhere
+- **WHEN** `KTALK_PERSONAL_API_KEY` is set to any value and `KTALK_SESSION_TOKEN` is also set
+- **THEN** the client SHALL use the session token's value exclusively — no request SHALL carry
+  `X-Auth-Token`, and `KTALK_PERSONAL_API_KEY`'s value SHALL NOT be used as a credential in any
+  request
 
 #### Scenario: Session env var takes priority over the token file
 
-- **WHEN** `KTALK_PERSONAL_API_KEY` is unset, `KTALK_SESSION_TOKEN` is set, and a token file exists
-  on disk with a different value
+- **WHEN** `KTALK_SESSION_TOKEN` is set and a token file exists on disk with a different value
 - **THEN** the client SHALL use the environment variable's value, not the file's
 
 #### Scenario: Token file is the fallback of last resort
 
-- **WHEN** neither `KTALK_PERSONAL_API_KEY` nor `KTALK_SESSION_TOKEN` is set, and a token file
-  exists
-- **THEN** the client SHALL use the file's value as a session token, without requiring the caller
-  to re-export an environment variable each session
+- **WHEN** `KTALK_SESSION_TOKEN` is not set and a token file exists
+- **THEN** the client SHALL use the file's value as the session token, without requiring the
+  caller to re-export an environment variable each session
 
-#### Scenario: No credential anywhere is a configuration error, not a network error
+#### Scenario: No session credential anywhere is a configuration error, not a network error
 
-- **WHEN** none of the three sources yields a value
+- **WHEN** neither `KTALK_SESSION_TOKEN` nor the token file yields a value, regardless of whether
+  `KTALK_PERSONAL_API_KEY` is set
 - **THEN** the client SHALL fail before any network call, with a message naming
-  `KTALK_PERSONAL_API_KEY`, `KTALK_SESSION_TOKEN`, and the token-file command as the three ways to
-  resolve it
+  `KTALK_SESSION_TOKEN` and the token-file command as the two ways to resolve it, and SHALL NOT
+  mention `KTALK_PERSONAL_API_KEY`
 
-### Requirement: 401 and 403 are distinct diagnoses, worded per mode
+### Requirement: Presence of the removed personal-key variable is never silent
 
-A `401` response SHALL be reported as an expired-or-invalid credential, naming the variable to
-refresh for the active mode (`KTALK_PERSONAL_API_KEY` in api-key mode, the session token in
-session mode). A `403` response SHALL be reported as a permissions gap, not a credential problem,
-and SHALL NOT suggest refreshing the credential. In api-key mode, a `403` tied to a known required
-scope SHALL name that scope by its human-readable label, not only its raw string. An unparsable or
-empty error body (observed for most `403` bodies) SHALL still produce a readable message, never a
-raw traceback.
+If `KTALK_PERSONAL_API_KEY` is present in the environment, the client SHALL print exactly one
+warning to stderr per command invocation stating that the personal-key mode has been removed and
+the variable is not used, then proceed on the session credential if one resolves. The warning
+SHALL NOT block the command and SHALL NOT be repeated per outgoing HTTP request within the same
+invocation (a multi-request command such as `sync` still prints exactly one line). The variable's
+value SHALL NOT appear in the warning text, in full or as a partial match (tail or otherwise).
 
-#### Scenario: 401 names the variable to refresh, per mode
+#### Scenario: The warning fires once per invocation, not once per request
 
-- **WHEN** the API returns `401` in api-key mode
-- **THEN** the message SHALL instruct the caller to refresh `KTALK_PERSONAL_API_KEY`
+- **WHEN** `KTALK_PERSONAL_API_KEY` is set and the invoked command issues more than one HTTP
+  request (for example `sync` with pagination)
+- **THEN** exactly one warning line SHALL appear on stderr for the whole invocation, and the
+  command SHALL complete normally on the session credential
 
-- **WHEN** the API returns `401` in session mode
-- **THEN** the message SHALL instruct the caller to refresh the session token, not the personal key
+#### Scenario: No session credential and the legacy variable set still yields the configuration error, plus the warning
 
-#### Scenario: 403 never suggests refreshing a valid credential
+- **WHEN** `KTALK_PERSONAL_API_KEY` is set and no session credential resolves
+- **THEN** the client SHALL still print the one-time warning, and SHALL still fail with the
+  configuration error of the previous requirement — the warning does not substitute for having a
+  working credential
 
-- **WHEN** the API returns `403` while a required scope is known for the operation
-- **THEN** the message SHALL name that scope and SHALL NOT suggest updating
-  `KTALK_PERSONAL_API_KEY` or the session token
+#### Scenario: Absence of the variable produces no warning
 
-- **WHEN** the API returns `403` in session mode
+- **WHEN** `KTALK_PERSONAL_API_KEY` is not set
+- **THEN** no warning about it SHALL be printed
+
+#### Scenario: The warning never carries the variable's value
+
+- **WHEN** `KTALK_PERSONAL_API_KEY` is set to a value containing a secret
+- **THEN** the printed warning SHALL NOT contain that value, in full or as a partial (tail) match
+
+### Requirement: 401 and 403 are distinct diagnoses
+
+A `401` response SHALL be reported as an expired-or-invalid session token, naming the session
+token as the value to refresh. A `403` response SHALL be reported as a permissions gap, not a
+credential problem, and SHALL NOT suggest refreshing the token — it SHALL state explicitly that
+the token itself is not the problem. An unparsable or empty error body (observed for most `403`
+bodies) SHALL still produce a readable message, never a raw traceback.
+
+#### Scenario: 401 names the session token as the value to refresh
+
+- **WHEN** the API returns `401`
+- **THEN** the message SHALL instruct the caller to refresh the session token (environment
+  variable or token file), not any other variable
+
+#### Scenario: 403 never suggests refreshing a valid token
+
+- **WHEN** the API returns `403`
 - **THEN** the message SHALL state the session lacks permission for the operation and SHALL
   explicitly say the token itself is not the problem
 
@@ -88,31 +111,29 @@ raw traceback.
 - **THEN** the caller SHALL receive a readable message, not an unhandled parse error or a raw
   stack trace
 
-### Requirement: Endpoint profile is keyed by operation and active mode; a missing profile fails before the network call
+### Requirement: Endpoint profile is keyed by operation; a missing profile fails before the network call
 
-Every operation's path and required scope SHALL be looked up from a single table
-(`OPERATION_PROFILES`) keyed by operation name and active auth mode, not branched inline per
-method. An operation with no profile entry for the active mode SHALL be rejected before any
-network request, with a message naming the operation and stating it is unavailable in the active
-mode — never a bare `401`/`403` from a blind attempt.
+Every operation's path SHALL be looked up from a single table (`OPERATION_PROFILES`) keyed by
+operation name, not branched inline per method. An operation with no profile entry for the
+session credential SHALL be rejected before any network request, with a message naming the
+operation and stating it is unavailable — never a bare `401`/`403` from a blind attempt. This
+covers operations that, before the personal-key mode was removed, had no working path under the
+session token at all (for example the archive listing) — removing the key does not give them a
+new path; it removes the only mode any client of this capability ever had for them.
 
-#### Scenario: Session-only or api-key-only operation rejects the other mode before the network
+#### Scenario: An operation with no working path is rejected before the network, not silently broken
 
-- **WHEN** an operation's profile table has no entry for the currently active auth mode (for
-  example the archive listing in session mode, or room/calendar/meeting-scheduling operations in
-  api-key mode, at the time this capability is confirmed only for session mode)
+- **WHEN** an operation's profile table has no entry that resolves under the session credential
+  (for example the archive listing, which never had a session-token path)
 - **THEN** the client SHALL reject the call before issuing any HTTP request, naming the operation
-  and stating it is not available under the active mode
+  and stating it is not available
 
-#### Scenario: List and detail operations resolve to different paths per mode
+#### Scenario: List and detail operations use the internal, undocumented paths
 
-- **WHEN** the active mode is session
-- **THEN** list/detail-of-recording operations SHALL use the internal, undocumented paths
-  (`/api/recordings`, `/api/recordings/{key}`)
-
-- **WHEN** the active mode is api-key
-- **THEN** the same operations SHALL use the documented `Domain` paths
-  (`/api/Domain/recordings/v2`, `/api/Domain/recordings/{key}`), each carrying its required scope
+- **WHEN** list-of-recordings or detail-of-recording operations are invoked
+- **THEN** they SHALL use the internal, undocumented paths (`/api/recordings`,
+  `/api/recordings/{key}`) — the documented `Domain` paths, reachable only under the removed
+  personal-key transport, are not a fallback
 
 ### Requirement: Credential resolution and diagnosis do not require the local registry
 
@@ -139,48 +160,57 @@ error. No other CLI command's registry requirement SHALL change as a result.
   `export`, `migrate`, `set-vault-id`) is run
 - **THEN** it SHALL still require a reachable registry file exactly as before this capability
 
-### Requirement: Auth-status diagnosis degrades honestly per mode and scope
+### Requirement: Auth-status diagnosis distinguishes an accepted session token from a rejected one
 
-In api-key mode, the diagnosis SHALL report `scopes[]` and `expiredAt` from a live request when the
-key has the scope to read its own access info; if the key lacks that scope, the diagnosis SHALL
-still report the key as alive (a `403` on this specific endpoint means "valid key, missing this one
-scope", not "dead key") with an explicit note, not a bare `403`. In session mode, where no
-scope/expiry endpoint exists, the diagnosis SHALL perform a live, minimal probe request and report
-only aliveness — it SHALL NOT fabricate a scope or expiry value, and SHALL NOT skip the network
-call in the name of parity with api-key mode.
+The diagnosis SHALL perform a live, minimal probe request and report whether the contour accepted
+or rejected the credential — it SHALL NOT fabricate an outcome and SHALL NOT skip the network
+call. `alive` in the `--json` response SHALL reflect the probe's outcome, not merely the presence
+of a variable or file. When the probe is rejected as an invalid or expired credential, `alive`
+SHALL NOT be `true` and `note` SHALL NOT claim the credential is valid. The rejection SHALL be
+observable through both channels a caller may read it by: the `alive` field in the response body,
+and the process's exit code — one channel carrying the signal while the other does not is not a
+compliant implementation of this requirement.
 
-#### Scenario: Api-key diagnosis with sufficient scope
+#### Scenario: Probe accepted
 
-- **WHEN** api-key mode is active and the key carries `application.applications.read`
-- **THEN** the diagnosis SHALL return `scopes[]` and `expiredAt` from a live request
+- **WHEN** the probe request succeeds
+- **THEN** `alive` SHALL be `true` and the command's exit code SHALL be `0`
 
-#### Scenario: Api-key diagnosis without the diagnosis's own scope
+#### Scenario: Probe rejected as invalid or expired (reproducible on a fixture, no live contour required)
 
-- **WHEN** api-key mode is active and the key lacks `application.applications.read`
-- **THEN** the diagnosis SHALL report the key as alive, with a note that scope information is
-  unavailable — not a raw `403`
+- **WHEN** the probe request returns `401`
+- **THEN** `alive` SHALL NOT be `true`, `note` SHALL NOT state the credential is valid, and the
+  command's exit code SHALL NOT be `0`
 
-#### Scenario: Session diagnosis performs a live probe, not a local guess
+#### Scenario: Unparsable probe response still yields an honest, non-blocking result
 
-- **WHEN** session mode is active and the diagnosis is invoked
-- **THEN** the client SHALL issue a minimal live request (a one-item recordings list) and report
-  aliveness from its outcome, and SHALL state explicitly that scope/expiry are not available in
-  this mode
+- **WHEN** the probe response body is empty or not valid JSON
+- **THEN** the diagnosis SHALL report a readable result that does not claim validity, not a raw
+  parse error or stack trace
 
-### Requirement: The personal key and session token never appear in output
+### Requirement: The session token and the removed personal-key variable never appear in output
 
-Neither `KTALK_PERSONAL_API_KEY` nor `KTALK_SESSION_TOKEN` SHALL appear, in full, in an exception
-message, a log line, or CLI stdout/stderr (including `--json` output), across a representative set
-of failure paths — a client-raised auth error, a generic network exception, and both text and JSON
-CLI error output.
+`KTALK_SESSION_TOKEN`'s value SHALL NOT appear, in full, in an exception message, a log line, or
+CLI stdout/stderr (including `--json` output), across a representative set of failure paths — a
+client-raised auth error, a generic network exception, and both text and JSON CLI error output.
+`KTALK_PERSONAL_API_KEY`'s value SHALL NOT appear in the one-time removal warning either, under
+the same masking barrier.
 
 #### Scenario: Secret absent from client-raised and generic exceptions
 
 - **WHEN** a request fails with a `401`/`403` classified by this client, or with an unrelated
   network exception
-- **THEN** neither credential value SHALL appear anywhere in the exception's string representation
+- **THEN** the session token's value SHALL NOT appear anywhere in the exception's string
+  representation
 
 #### Scenario: Secret absent from CLI stderr in both output modes
 
-- **WHEN** a CLI command fails while a credential is set, in plain-text mode or with `--json`
+- **WHEN** a CLI command fails while the session credential is set, in plain-text mode or with
+  `--json`
 - **THEN** the printed error SHALL NOT contain the credential value
+
+#### Scenario: The removal warning never leaks the legacy variable's value
+
+- **WHEN** `KTALK_PERSONAL_API_KEY` is set to a value containing a secret and the one-time removal
+  warning is printed
+- **THEN** the warning text SHALL NOT contain that value, in full or as a partial match

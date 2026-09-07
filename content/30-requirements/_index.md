@@ -7,7 +7,8 @@ title: Требования
 
 | Требование | Фаза | Статус |
 |------------|------|--------|
-| [Персональный API-ключ и расширение возможностей](personal-api-key.md) | Production | Draft |
+| [Персональный API-ключ и расширение возможностей](personal-api-key.md) | Production | Superseded |
+| [Единственный режим авторизации — сессионный токен](single-auth-mode.md) | Production | Draft |
 | [Комнаты, календарь и планирование встреч](rooms-calendar-scheduling.md) | Production | Draft |
 | [Наблюдаемость момента последней синхронизации реестра](registry-sync-observability.md) | Production | Draft |
 | [Обнаружимость подмены транскрипта под конкуренцией](transcript-identity-observability.md) | Production | Draft |
