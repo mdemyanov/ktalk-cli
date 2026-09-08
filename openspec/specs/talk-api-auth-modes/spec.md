@@ -169,7 +169,11 @@ of a variable or file. When the probe is rejected as an invalid or expired crede
 SHALL NOT be `true` and `note` SHALL NOT claim the credential is valid. The rejection SHALL be
 observable through both channels a caller may read it by: the `alive` field in the response body,
 and the process's exit code — one channel carrying the signal while the other does not is not a
-compliant implementation of this requirement.
+compliant implementation of this requirement. A probe rejected for lack of permission (`403`) is
+not a rejection of the credential: it SHALL be reported as `alive` (`true`, exit code `0`), with
+`note` stating the gap is permissions, not the token — the distinction this capability draws
+generically between `401` and `403` (see "401 and 403 are distinct diagnoses") applies to the
+probe outcome itself, not only to a mid-operation failure of some other command.
 
 #### Scenario: Probe accepted
 
@@ -181,6 +185,13 @@ compliant implementation of this requirement.
 - **WHEN** the probe request returns `401`
 - **THEN** `alive` SHALL NOT be `true`, `note` SHALL NOT state the credential is valid, and the
   command's exit code SHALL NOT be `0`
+
+#### Scenario: Probe rejected for permissions, not credential (reproducible on a fixture, no live contour required)
+
+- **WHEN** the probe request returns `403`
+- **THEN** `alive` SHALL be `true`, the command's exit code SHALL be `0`, and `note` SHALL state
+  that the session lacks permission for the probed operation without claiming or implying that the
+  token needs to be refreshed
 
 #### Scenario: Unparsable probe response still yields an honest, non-blocking result
 

@@ -239,7 +239,17 @@ class KTalkClient:
         отдельно от `KTalkAuthError` — раньше всплывало сырым текстом до `main()`."""
         try:
             await self.list_recordings(top=1)
-        except KTalkAuthError:
+        except KTalkAuthError as exc:
+            if getattr(exc, "status_code", None) == 403:
+                # 403 на пробном запросе — не отказ токена, а нехватка прав на саму
+                # пробную операцию (ADR-025 «Разведение 401/403»).
+                return AuthStatus(
+                    alive=True,
+                    note=(
+                        "Доступ запрещён: у текущей сессии нет прав на пробную операцию "
+                        "(список записей). Токен при этом рабочий — обновлять его не нужно."
+                    ),
+                )
             return AuthStatus(
                 alive=False,
                 note="Токен сессии не прошёл проверку (пробный запрос списка записей).",
