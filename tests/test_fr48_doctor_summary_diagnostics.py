@@ -17,6 +17,12 @@ Dev не зарегистрирует подкоманду. Это стабил�
 причина падения для КАЖДОГО теста этого файла на сегодняшнем коде — как только
 `doctor` зарегистрирован, тесты начинают падать (или проходить) по своей
 индивидуальной причине.
+
+`test_fr48_15_*` — регрессия дефекта `ktalk-mcp-qqc` (403 на пробном запросе
+`auth-status`, схлопнутый в отказ токена, разведён ADR-025-spec «Разведение
+401/403 в пробном запросе `auth-status`»): `auth` не должен попасть в
+`failed_items` доктора, если пробный запрос отклонён по нехватке прав, а не по
+невалидному токену.
 """
 
 from __future__ import annotations
@@ -388,6 +394,43 @@ def test_fr48_13_human_readable_output_names_failed_item_by_key(
     out = capsys.readouterr().out
 
     assert "auth" in out
+
+
+def test_fr48_15_probe_403_does_not_mark_auth_as_failed(
+    monkeypatch, tmp_path, httpx_mock: HTTPXMock, capsys
+):
+    """Регрессия дефекта `ktalk-mcp-qqc` внутри `doctor` (ADR-025-spec, «edge
+    cases»/companion-спека ADR-026 §2): пробный запрос отклонён `403` — токен
+    рабочий, `_auth_item` кладёт пункт `auth` в `failed_items` по `not
+    status.alive`, а `alive` обязан остаться `True` на 403 (не отказ токена).
+    `auth.alive=True` не создаёт провала сам по себе — тот же приём, что
+    `test_fr48_8` фиксирует для `token_file`, здесь наоборот: провал не должен
+    возникнуть там, где его не должно быть.
+
+    Красный сегодня: `_auth_status_session` (`client.py`) не разбирает
+    `exc.status_code` — 403 даёт `alive=False`, `_auth_item` кладёт `auth` в
+    `failed_items`, `doctor` возвращает ненулевой код по этой причине одной.
+    """
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("CLAUDE_PROJECT_DIR", raising=False)
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    monkeypatch.delenv("KTALK_TOKEN_FILE", raising=False)
+    monkeypatch.setenv("KTALK_REGISTRY_DB", str(tmp_path / "r.db"))
+    monkeypatch.setenv("KTALK_SESSION_TOKEN", "sess-doctor-0015")
+    monkeypatch.delenv("KTALK_PERSONAL_API_KEY", raising=False)
+    httpx_mock.add_response(status_code=403)
+
+    from ktalk_cli.cli import main
+    from ktalk_cli.token_file import write_token
+
+    write_token("okDOCTORtoken0123456")
+
+    rc = main(["doctor", "--json"])
+    data = json.loads(capsys.readouterr().out)
+
+    assert data["auth"]["alive"] is True
+    assert "auth" not in data["failed_items"]
+    assert rc == 0
 
 
 def test_fr48_14_found_host_config_path_agrees_with_config_show(

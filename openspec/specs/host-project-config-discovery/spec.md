@@ -108,6 +108,20 @@ variable and the default, not ahead of either existing source.
 - **WHEN** neither `--db` nor `KTALK_REGISTRY_DB` is set, but the host config declares a path
 - **THEN** that host-config path SHALL be used, not the machine default
 
+#### Scenario: A relative host-config path resolves against the config file's own directory
+
+- **WHEN** `.ktalk.toml` declares a relative `registry.db_path`, and the command runs from a
+  working directory other than the one containing that `.ktalk.toml` (including a subdirectory of
+  the host project)
+- **THEN** the resolved path SHALL be joined against the directory containing the discovered
+  `.ktalk.toml`, not against the current working directory of the invoking process
+
+#### Scenario: An absolute host-config path is used unmodified
+
+- **WHEN** `.ktalk.toml` declares an absolute `registry.db_path`
+- **THEN** the resolved path SHALL be used as given — the directory of `.ktalk.toml` SHALL NOT
+  enter the resolution
+
 ### Requirement: `ktalk doctor` surfaces this capability's discovery outcome unchanged
 
 The `doctor` aggregated report SHALL include the host config discovery outcome using the same

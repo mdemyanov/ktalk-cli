@@ -38,6 +38,17 @@ def resolve_db_path(
     обязана применяться к итоговому пути независимо от источника (ADR-013-spec
     §«Поток данных» п.4) — до этой правки вызывалась только в ветке машинного
     дефолта; `--db`/`KTALK_REGISTRY_DB`/конфиг хозяина возвращали путь раньше.
+
+    FR-23 AC-4/AC-5: относительный `registry.db_path` резолвится
+    против `host_config.path.parent` (каталог, где найден `.ktalk.toml`), не
+    против cwd вызывающего процесса — резолюция от cwd и есть исходный дефект
+    («unable to open database file» при запуске не из корня проекта-хозяина).
+    Абсолютный `db_path` используется как есть, каталог `.ktalk.toml` в
+    резолюцию не участвует. `host_config.path is None` при относительном
+    `db_path` — нарушение инварианта вызывающей стороны (в проде
+    `discover_host_config`, SA-003, всегда заполняет `path`) — явное
+    исключение, не тихий откат на cwd. `--db`/`KTALK_REGISTRY_DB` вне области
+    (BA-031) — резолюция от cwd для них остаётся конвенцией CLI/окружения.
     """
     from ktalk_cli.store import resolve_store_root, warn_if_sync_dir
 
@@ -54,6 +65,15 @@ def resolve_db_path(
         configured = host_config.registry.get("db_path")
         if configured:
             path = Path(configured)
+            if not path.is_absolute():
+                if host_config.path is None:
+                    raise KTalkConfigError(
+                        f"Относительный registry.db_path ({configured!r}) в конфиге "
+                        "хозяина требует известный каталог .ktalk.toml, а "
+                        "host_config.path не задан — резолюция от текущего "
+                        "рабочего каталога воспроизвела бы исходный дефект."
+                    )
+                path = host_config.path.parent / path
             warn_if_sync_dir(path)
             return path
 

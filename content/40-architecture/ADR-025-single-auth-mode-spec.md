@@ -66,7 +66,7 @@ ADR-025 снимает режим персонального API-ключа (ADR
 | 10 | `client.py::get_full_participants`/`auth.py::full_participants_apikey` | `if mode is API_KEY: return await full_participants_apikey(...)` | Ветка и функция `full_participants_apikey` удалены; остаётся безусловное дообогащение `get_recording`+`get_conference` |
 | 11 | `client.py::_fetch_chat_messages` | `if mode is API_KEY: path=".../ConferenceReports/..."` | Ветка удалена, остаётся `/api/conferencesHistory/{key}/chat/messages` |
 | 12 | `client.py::get_participants_report` | Метод + вызов `_call("get_participants_report", ...)` | Метод удалён целиком (нет CLI-вызывающего кода — `grep` подтверждён) |
-| 13 | `client.py::get_auth_status`/`_auth_status_apikey`/`_auth_status_session` | Диспетчер по режиму, api-key-ветка через `access-info` | `_auth_status_apikey` удалён; `get_auth_status` вызывает только `_auth_status_session`; `_auth_status_session` ловит `except KTalkAuthError` (текущее поведение) и `except ValueError` (новое — непарсящееся тело `response.json()` внутри `list_recordings`) отдельными ветками, обе возвращают `AuthStatus(alive=False, note=...)` без утверждения валидности |
+| 13 | `client.py::get_auth_status`/`_auth_status_apikey`/`_auth_status_session` | Диспетчер по режиму, api-key-ветка через `access-info` | `_auth_status_apikey` удалён; `get_auth_status` вызывает только `_auth_status_session`; `_auth_status_session` ловит `except KTalkAuthError as exc` и `except ValueError` (непарсящееся тело `response.json()` внутри `list_recordings`) отдельными ветками. Ветка `KTalkAuthError` читает `exc.status_code` (ADR-008 §2): `403` → `AuthStatus(alive=True, note=...)` — токен рабочий, не хватает прав на пробную операцию; любой другой код (включая `401`, включая отсутствие атрибута) → `AuthStatus(alive=False, note=...)` без утверждения валидности. Ветка `ValueError` не меняется |
 | 14 | `auth.py::AuthStatus` | `alive, scopes, expired_at, note` | `alive, note` |
 | 15 | `cli_sync.py::cmd_auth_status` | `data = {alive, scopes, expired_at, note}`, `return 0` безусловно | `data = {alive, note}`; `return 0 if status.alive else 1` |
 | 16 | `cli_sync.py::_fetch_recordings` | `if settings.auth_mode is AuthMode.API_KEY: token_pages(...)` | Ветка удалена, остаётся только `skip_pages(...)` |
@@ -78,6 +78,70 @@ ADR-025 снимает режим персонального API-ключа (ADR
 | 22 | `content/40-architecture/security-review-personal-api-key.md` | Ревью режима без пометки о снятии | Добавлена короткая заметка: режим снят ADR-025, документ сохранён как исторический след ревью снятого режима; ревью session-only поверхности этой волной не заказано (решение владельца) |
 | 23 | `tests/test_auth_modes.py`, `tests/test_secret_masking.py`, `tests/test_fr19_auth_status.py`, + api-key-фикстуры в прочих 20 файлах (замер BA) | Покрывают оба режима | Api-key-сценарии удаляются; сценарии FR-42/43/44 из `openspec/specs/talk-api-auth-modes/spec.md` добавляются — контракт с QA-author ниже |
 
+## Разведение 401/403 в пробном запросе `auth-status`
+
+Нехватка прав на пробную операцию (`403`) — не отказ токена; тот же принцип, который
+`classify_response` уже применяет к сообщению об ошибке на обычной операции, распространяется на
+вердикт диагностики (требование `single-auth-mode.md`, §«Формулировка — для единственного
+оставшегося режима», BA-030).
+
+**Файл:** `client.py::_auth_status_session`. Механизм получения кода ответа — атрибут
+`exc.status_code` на пойманном исключении (`_auth_error`, ADR-008 §2), не повторный разбор
+`response` до классификации: `list_recordings` не возвращает `response` наружу при отказе, только
+поднимает исключение через `classify_response`, и `_call`/`_classify` — единственная точка, где
+`response.status_code` вообще виден. Приём из `v2.0.0::_auth_status_apikey` (сравнение
+`response.status_code` до вызова `classify_response`, отдельный от `list_recordings` эндпоинт
+`access-info`) сюда не переносится: `_auth_status_session` намеренно переиспользует
+`list_recordings` как пробную операцию (ADR-025 «Решение» — не вводить отдельный диагностический
+эндпоинт), и разбор `response` до классификации потребовал бы либо дублирования HTTP-вызова, либо
+изменения сигнатуры `list_recordings` ради одного вызывающего места. Чтение `status_code` с
+исключения — эксплуатация уже существующего барьера ADR-008 §2, без второй точки, где хранится код
+ответа.
+
+```python
+async def _auth_status_session(self) -> AuthStatus:
+    try:
+        await self.list_recordings(top=1)
+    except KTalkAuthError as exc:
+        if getattr(exc, "status_code", None) == 403:
+            return AuthStatus(
+                alive=True,
+                note=(
+                    "Доступ запрещён: у текущей сессии нет прав на пробную операцию "
+                    "(список записей). Токен при этом рабочий — обновлять его не нужно."
+                ),
+            )
+        return AuthStatus(
+            alive=False,
+            note="Токен сессии не прошёл проверку (пробный запрос списка записей).",
+        )
+    except ValueError:
+        return AuthStatus(
+            alive=False,
+            note="Ответ пробного запроса не удалось разобрать — судить о токене нельзя.",
+        )
+    return AuthStatus(alive=True, note=...)  # без изменений
+```
+
+Порядок `except`-веток не меняется (`KTalkAuthError` первой, `ValueError` второй) — пересечения
+иерархий нет (`KTalkAuthError` не наследует `ValueError`), перестановка ничего не меняет по
+существу, но не вносится без причины.
+
+`KTalkScopeError`/`KTalkWriteAuthMismatchError` (подклассы `KTalkAuthError`) не требуют отдельной
+ветки: код ветвится по `exc.status_code`, не по классу исключения, и оба подкласса структурно
+недостижимы в этом пути вызова сегодня — `KTalkScopeError` нигде не поднимается (мёртвый класс,
+`grep -rn "raise KTalkScopeError"` пуст), `KTalkWriteAuthMismatchError` поднимается только
+`contour_diagnostics.diagnose_undocumented_failure`, вызываемым из `calendar_reader.py`/
+`meeting_scheduling.py`/`rooms.py`, не из `list_recordings`. Если один из них станет достижим здесь
+в будущем — ветвление по `status_code` продолжит работать без правки, при условии что подкласс
+по-прежнему поднимается через `_auth_error` (несущую `status_code`).
+
+Оба потребителя `AuthStatus` — `cli_sync.py::cmd_auth_status` (`return 0 if status.alive else 1`) и
+`cli_doctor.py::_auth_item` (`not status.alive` → `failed_items`) — уже читают только `status.alive`/
+`status.note`, без собственной классификации кода ответа (см. companion-спека ADR-026 §2,
+`_auth_item`). Правка одной точки-производителя (`_auth_status_session`) закрывает дефект в обоих
+потребителях без отдельной правки `cli_doctor.py` — вторая правка не нужна.
+
 ## NFR Mapping
 
 - NFR-18 (ломающее изменение названо явно, 3.0.0) → раздел «Breaking change» ADR-025 п.5 + README
@@ -88,9 +152,11 @@ ADR-025 снимает режим персонального API-ключа (ADR
 - FR-43 (однократное предупреждение) → правки #3, #4 выше; носитель — `tests/test_secret_masking.py`
   (расширяется сценарием из требования, AC4) + новый тест на «ровно одна строка за вызов, не за
   запрос» (мультизапросная команда `sync`).
-- FR-44 (различение принятого/отвергнутого значения) → правки #13, #14, #15; носитель —
-  `tests/test_fr19_auth_status.py`/`tests/test_auth_modes.py`, сценарий «Probe rejected as invalid
-  or expired» (401 на фикстуре) и «Unparsable probe response» (пустое/невалидное тело).
+- FR-44 (различение принятого/отвергнутого значения, включая 403 ≠ отказ токена) → правки #13, #14,
+  #15 плюс раздел «Разведение 401/403…» выше; носитель — `tests/test_fr19_auth_status.py`/
+  `tests/test_fr44_auth_status_accepted_rejected.py`, сценарии «Probe rejected as invalid or
+  expired» (401 на фикстуре), «Probe rejected for permissions, not credential» (403 на фикстуре,
+  новый сценарий BA-030) и «Unparsable probe response» (пустое/невалидное тело).
 
 ## Брифы
 
@@ -136,6 +202,7 @@ ADR-025 снимает режим персонального API-ключа (ADR
 - Scenario: Every other registry-dependent command is unaffected — там же
 - Scenario: Probe accepted — `### Requirement: Auth-status diagnosis distinguishes an accepted session token from a rejected one`
 - Scenario: Probe rejected as invalid or expired (reproducible on a fixture, no live contour required) — там же
+- Scenario: Probe rejected for permissions, not credential (reproducible on a fixture, no live contour required) — там же
 - Scenario: Unparsable probe response still yields an honest, non-blocking result — там же
 - Scenario: Secret absent from client-raised and generic exceptions — `### Requirement: The session token and the removed personal-key variable never appear in output`
 - Scenario: Secret absent from CLI stderr in both output modes — там же
@@ -164,6 +231,14 @@ ADR-025 снимает режим персонального API-ключа (ADR
   мока = падение теста, если код всё же попытался дойти до сети).
 - `--db` на несуществующий путь + `auth-status` — диагностика всё равно выполняется (регрессия
   FR-19, не переносится текстом AC сюда — уже закрыта).
+- Пробный запрос отклонён `403` — `alive: true`, код возврата `0`, `note` называет нехватку прав и
+  не упоминает обновление токена (проверка дословного текста, не только присутствия подстроки).
+- `403` на пробном запросе внутри `ktalk doctor` — пункт `auth` не входит в `failed_items`
+  (регрессия для `test_fr48_8_absent_token_file_is_declared_failure_even_when_auth_alive`-стиля
+  теста: `auth.alive=True` не создаёт провала сам по себе).
+- `KTalkScopeError`/`KTalkWriteAuthMismatchError` не воспроизводимы в пути `_auth_status_session`
+  сегодня (ни один код в дереве их не поднимает на этом вызове) — тест на них не заводится как
+  отдельный сценарий, ветвление проверяется только через `status_code` на базовом `KTalkAuthError`.
 
 **Test-pyramid recommendation:**
 
@@ -174,5 +249,6 @@ ADR-025 снимает режим персонального API-ключа (ADR
 | 401/403 distinct diagnoses (3 сценария) | unit | `classify_response` на моках `httpx.Response` |
 | Endpoint profile keyed by operation (2 сценария) | unit | `_profile_for` на таблице, без сети (мок обязан падать при попытке сети — см. edge case выше) |
 | Diagnosis without local registry (3 сценария) | integration | Реальный `Registry`/`--db` путь пересекает файловую систему, не только функцию |
-| Auth-status distinguishes accepted/rejected (3 сценария) | integration | Через `KTalkClient` с мокнутым `httpx` — пересекает `_call`→`classify_response`→`AuthStatus`, не одну функцию |
+| Auth-status distinguishes accepted/rejected, incl. 403 (4 сценария) | integration | Через `KTalkClient` с мокнутым `httpx` — пересекает `_call`→`classify_response`→`AuthStatus`, не одну функцию |
+| `doctor` не отмечает `auth` провалом на 403 (1 сценарий, регрессия) | integration | Пересекает `cli_doctor.cmd_doctor`→`_auth_item`→`AuthStatus`, не одну функцию (companion-спека ADR-026) |
 | Secret never appears in output (3 сценария) | integration | Проверяет CLI stdout/stderr целиком (оба режима вывода), не только `redact_secrets` изолированно |
