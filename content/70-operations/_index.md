@@ -10,3 +10,4 @@ title: Эксплуатация
 |-----|-----------|--------|
 | [OPS-001](OPS-001-registry-migration-rollback.md) | Откат миграции реестра в централизованное хранилище ([ADR-013](../00-project/adr/ADR-013-central-transcript-store.md) §7) | Approved |
 | [OPS-002](OPS-002-single-auth-mode-transition.md) | Переход на единственный режим авторизации, снятие персонального API-ключа ([ADR-025](../00-project/adr/ADR-025-single-auth-mode.md)) | Draft |
+| [OPS-003](OPS-003-env-var-shadows-token-file.md) | Переменная `KTALK_SESSION_TOKEN` перекрывает файл токена и переживает его ротацию | Approved |
