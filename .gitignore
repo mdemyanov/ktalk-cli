@@ -25,5 +25,9 @@ docs/*.har
 *.db
 .beads-credential-key
 .beads/proxieddb/
+# Аудиторский сайдкар взаимодействий агентов (bd, audit.enabled) — локальная
+# телеметрия прогона, не состояние трекера: оно живёт в Dolt и уезжает через
+# refs/dolt/data (sync.remote в .beads/config.yaml), а не через этот файл.
+.beads/interactions.jsonl
 *.gate.lock*
 packaging/*/dist/
