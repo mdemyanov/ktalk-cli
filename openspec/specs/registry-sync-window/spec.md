@@ -3,10 +3,9 @@
 ## Purpose
 
 Governs how `ktalk sync` bounds a single page request, continues across pages, restricts results
-to a client-side date window (because the server does not honor date filters), protects the
-registry against duplication the first time a domain switches to api-key mode, and exposes the
+to a client-side date window (because the server does not honor date filters), and exposes the
 moment of the last completed sync to read-only consumers without requiring a mutating `sync` call
-to observe it. Source: `content/30-requirements/personal-api-key.md` FR-14…FR-16; the last-sync
+to observe it. Source: `content/30-requirements/personal-api-key.md` FR-14, FR-16; the last-sync
 observability requirement — `content/30-requirements/registry-sync-observability.md` FR-41.
 
 ## Requirements
@@ -66,34 +65,6 @@ dropped, because an unparsable date is not evidence the record is out of the win
 
 - **WHEN** a record's date field is empty or fails to parse
 - **THEN** the record SHALL be kept in the result, not discarded as if it were out of the window
-
-### Requirement: A dry-run identifier reconciliation gates the first api-key sync
-
-Before the first sync run in api-key mode is allowed to write to a registry that already holds
-records synced in session mode, a dry run SHALL compare the set of record identifiers the api-key
-response returns against only the portion of the existing registry that falls in the same date
-window as the requested sync — not against the entire registry history, which would produce
-near-universal false mismatches on a registry with a long history. A mismatch SHALL block the
-ordinary (writing) sync from running automatically; a full match SHALL allow it to proceed.
-
-#### Scenario: Dry run compares window to window, not window to the whole registry
-
-- **WHEN** a dry run runs for a `--days N` window against a registry holding a much longer history
-- **THEN** the comparison SHALL be scoped to registry records whose date falls within the same
-  window as the dry run's `--days N`, not the full registry
-
-#### Scenario: A mismatch blocks the ordinary sync
-
-- **WHEN** the dry run finds identifiers present in the api-key response but absent from the
-  window-scoped registry, or vice versa
-- **THEN** the ordinary (writing) sync SHALL NOT proceed automatically — the mismatch SHALL be
-  reported and require an operator decision
-
-#### Scenario: A full match allows the ordinary sync to proceed
-
-- **WHEN** the dry run finds the api-key response's identifiers and the window-scoped registry's
-  identifiers to be identical sets
-- **THEN** the ordinary sync MAY proceed
 
 ### Requirement: The last sync moment is exposed by a reading command, not only recorded internally
 

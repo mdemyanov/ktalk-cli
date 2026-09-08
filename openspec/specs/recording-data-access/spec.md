@@ -16,40 +16,23 @@ transcript-identity observability requirement —
 
 The client SHALL stream the recording file to the target path without buffering it whole in
 memory. The quality name SHALL be normalized (case-insensitive, whitespace-insensitive) before
-being matched or placed in a request URL, because the two data sources disagree on spelling
-(`900p` without a space in session-mode data, `900 p` with a space in the api-key path template).
-In session mode, a quality absent from the recording's available list SHALL be rejected with the
-list of available qualities, not an unhandled exception. An existing target file SHALL NOT be
-silently overwritten.
+being matched against the recording's available qualities (`900p` and `900 p` SHALL match the same
+entry). A quality absent from the recording's available list SHALL be rejected with the list of
+available qualities, not an unhandled exception. An existing target file SHALL NOT be silently
+overwritten.
 
-**Known limitation, scoped by design (not a defect):** in api-key mode, the recording-detail
-response (`TalkDomainConferenceRecording`) carries no `qualities[]` field at all — there is no
-list on this API surface to validate the requested quality against. The requested quality is
-therefore used as-is and passed straight to the request URL; a wrong value surfaces as whatever
-the raw network response returns, not as a curated `QualityNotFoundError`. This is an accepted
-scope boundary for this wave, pending SA confirmation of whether a future API surface exposes an
-api-key-mode quality list — it is not an oversight to silently work around.
-
-#### Scenario: Quality-name spelling mismatch does not break the URL
+#### Scenario: Quality-name spelling mismatch does not break the match
 
 - **WHEN** a download is requested with a quality name spelled with or without an internal space
   (`900p` vs `900 p`)
-- **THEN** the client SHALL normalize it before building the request, and the request SHALL
-  succeed structurally (no `InvalidURL` from an unescaped space)
+- **THEN** the client SHALL normalize it before matching, and the request SHALL succeed
+  structurally (no `InvalidURL` from an unescaped space)
 
-#### Scenario: Requesting an unavailable quality names the available ones, in session mode
+#### Scenario: Requesting an unavailable quality names the available ones
 
-- **WHEN**, in session mode, the requested quality is not among the recording's available
-  qualities
+- **WHEN** the requested quality is not among the recording's available qualities
 - **THEN** the client SHALL raise an error listing the qualities that are actually available,
   not an unhandled exception
-
-#### Scenario: Api-key mode passes the requested quality through unvalidated
-
-- **WHEN**, in api-key mode, a download is requested with any quality name
-- **THEN** the client SHALL NOT attempt to validate it against a list (none is available on this
-  API surface) — it SHALL send the request with that quality as given, not raise a curated
-  "unavailable quality" error
 
 #### Scenario: Download is streamed, not buffered whole
 
@@ -65,9 +48,9 @@ api-key-mode quality list — it is not an oversight to silently work around.
 ### Requirement: Full participant roster merges sources without dropping anonymous participants
 
 When the recording's own participant list is shorter than its reported participant count, the
-client SHALL enrich it — through pagination in api-key mode, through a second, independent read
-(the conference record) in session mode — rather than trusting the short list. Enrichment SHALL
-trigger only when the count is strictly greater than the list length, not on every call. A
+client SHALL enrich it through a second, independent read (the conference record) rather than
+trusting the short list. Enrichment SHALL trigger only when the count is strictly greater than the
+list length, not on every call. A
 participant with `isAnonymous: true` and no `userInfo` SHALL be present in the merged result with a
 distinguishable representation, never silently dropped. Merging two sources SHALL de-duplicate by
 participant identity (the user's key/login, or the anonymous id), not by array position.
@@ -90,36 +73,26 @@ participant identity (the user's key/login, or the anonymous id), not by array p
   record's list
 - **THEN** the merged result SHALL contain that participant exactly once
 
-### Requirement: Archive listing is api-key-only, paginated, and window-filterable
+### Requirement: Archive listing has no working path and is rejected before any network call
 
-The archive of past conferences SHALL be reachable only in api-key mode; a request for it in
-session mode SHALL be rejected with an explicit message naming api-key mode as the requirement,
-not a bare `401`/`403` (the underlying path is confirmed unreachable under a session token). The
-client SHALL exhaust pagination on the client side and return every matching conference in the
-requested date window, not only the first page. A room-name filter, when supplied, SHALL be passed
-through to the server.
+The archive of past conferences never had a working path under the session credential — the
+underlying path is confirmed unreachable (`401`/`403`) — and removing the personal-key mode did
+not create one (ADR-025). It SHALL be rejected through the endpoint-profile mechanism
+(`talk-api-auth-modes`, "Endpoint profile is keyed by operation") before any archive-specific
+network call, naming the archive operation as unavailable, not a bare `401`/`403`.
 
-#### Scenario: Archive is refused explicitly in session mode
+#### Scenario: Archive listing is refused before any network call
 
-- **WHEN** the archive is requested while session mode is active
-- **THEN** the client SHALL refuse before any archive-specific network call, stating the archive
-  is available only in api-key mode
+- **WHEN** the archive is requested
+- **THEN** the client SHALL refuse before issuing any archive-specific HTTP request, naming the
+  archive operation as unavailable
 
-#### Scenario: A date window spanning multiple pages returns every matching item
-
-- **WHEN** api-key mode is active and the requested date window contains more items than fit on
-  one page
-- **THEN** the client SHALL continue fetching until the pagination is exhausted and return every
-  item in the window, not only the first page
-
-### Requirement: Chat messages resolve a channel before fetching, per-mode path
+### Requirement: Chat messages resolve a channel before fetching
 
 When no channel is given explicitly, the client SHALL determine one from the conference's own
 metadata (its channels with messages) rather than sending a request the server is known to reject
-with a raw `400` for a missing channel. The message-fetch path SHALL differ by auth mode (the
-conference-history path in session mode, the api-key-only reporting path in api-key mode). A `403`
-on a specific channel SHALL be reported as a permissions gap on that channel by name, not a bare
-`403`.
+with a raw `400` for a missing channel. A `403` on a specific channel SHALL be reported as a
+permissions gap on that channel by name, not a bare `403`.
 
 #### Scenario: Missing channel is resolved automatically, not left to fail with a raw 400
 
