@@ -160,6 +160,76 @@ def test_maj02_file_written_after_registry_closes_uses_ambient_umask_not_0o077(
 # --- MAJ-03: export пишет зеркало рядом с БД из .ktalk.toml, а не рядом с дефолтом ---
 
 
+def test_fr23_ac4_bare_cli_relative_db_path_from_subdirectory_reproduces_dashboard_symptom(
+    tmp_path, monkeypatch, capsys
+):
+    """Discovery-режим 2 (обход вверх от cwd, SA-003) + FR-23 AC-4 (ktalk-mcp-ds6):
+    буквальное воспроизведение отчёта владельца — `cd .../95_TRANSCRIPTS && ktalk
+    dashboard` падал `unable to open database file`, потому что относительный
+    db_path резолвился от cwd вместо каталога найденного .ktalk.toml (обход
+    находит конфиг в родителе, а не в cwd самом). `dashboard` — команда из
+    исходного отчёта, не заменена на `list` намеренно."""
+    project = tmp_path / "naumen-cto"
+    project.mkdir()
+    (project / ".git").mkdir()
+    db_path = project / "95_TRANSCRIPTS" / ".registry.db"
+    db_path.parent.mkdir(parents=True)
+    _seed(db_path)
+    (project / ".ktalk.toml").write_text(
+        '[registry]\ndb_path = "95_TRANSCRIPTS/.registry.db"\n', encoding="utf-8"
+    )
+
+    monkeypatch.delenv("KTALK_REGISTRY_DB", raising=False)
+    monkeypatch.delenv("CLAUDE_PROJECT_DIR", raising=False)
+    monkeypatch.chdir(db_path.parent)  # ровно подкаталог хранилища из отчёта
+
+    from ktalk_cli.cli import main
+
+    rc = main(["dashboard", "--json"])
+    assert rc == 0
+    out = json.loads(capsys.readouterr().out)
+    ids = {r["recording_id"] for r in out["new"]}
+    assert "wired" in ids, (
+        "TODO: FR-23 AC-4 — относительный db_path обязан резолвиться от "
+        "каталога .ktalk.toml (host_config.path.parent), не от cwd вызова"
+    )
+
+
+def test_fr23_ac4_explicit_claude_project_dir_relative_db_path_ignores_unrelated_cwd(
+    tmp_path, monkeypatch, capsys
+):
+    """Discovery-режим 1 (явный CLAUDE_PROJECT_DIR, SA-003) + FR-23 AC-4: cwd —
+    каталог, не являющийся ни проектом, ни его предком/потомком (обход вверх в
+    этом режиме не выполняется вовсе, discovery ищет ровно по CLAUDE_PROJECT_DIR).
+    Относительный db_path обязан резолвиться от CLAUDE_PROJECT_DIR, не от этого
+    произвольного cwd."""
+    project = tmp_path / "project"
+    project.mkdir()
+    db_path = project / "store" / "registry.db"
+    db_path.parent.mkdir(parents=True)
+    _seed(db_path)
+    (project / ".ktalk.toml").write_text(
+        '[registry]\ndb_path = "store/registry.db"\n', encoding="utf-8"
+    )
+    unrelated_cwd = tmp_path / "unrelated"
+    unrelated_cwd.mkdir()
+
+    monkeypatch.delenv("KTALK_REGISTRY_DB", raising=False)
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(project))
+    monkeypatch.chdir(unrelated_cwd)
+
+    from ktalk_cli.cli import main
+
+    rc = main(["list", "--json"])
+    assert rc == 0
+    out = json.loads(capsys.readouterr().out)
+    ids = {r["recording_id"] for r in out["recordings"]}
+    assert "wired" in ids, (
+        "TODO: FR-23 AC-4 — discovery-режим 1: относительный db_path обязан "
+        "резолвиться от CLAUDE_PROJECT_DIR, не от cwd"
+    )
+
+
 def test_maj03_export_mirror_follows_host_config_db_path(tmp_path, monkeypatch, capsys):
     """`_cmd_export` резолвил путь БД повторно и БЕЗ host_config: реестр читался из
     `.ktalk.toml`, а `registry.md` уезжал к машинному дефолту (`store.resolve_store_root`).

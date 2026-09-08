@@ -135,3 +135,110 @@ def test_resolve_db_path_none_of_the_four_sources_falls_through_to_machine_defau
     assert not resolved.is_relative_to(Path.cwd()), (
         "TODO: FR-22 AC-1 — машинный дефолт вне cwd, не 95_TRANSCRIPTS/.registry.db"
     )
+
+
+# --- FR-23 AC-4/AC-5 (ktalk-mcp-ds6): относительный db_path из конфига хозяина ---
+# джойнится с каталогом .ktalk.toml (host_config.path.parent), не с cwd;
+# абсолютный db_path остаётся как есть, каталог .ktalk.toml не участвует.
+# Spec: openspec/specs/host-project-config-discovery/spec.md, «A relative
+# host-config path resolves against the config file's own directory» /
+# «An absolute host-config path is used unmodified».
+
+
+def test_fr23_ac4_relative_db_path_joins_against_host_config_dir_not_cwd(
+    monkeypatch, tmp_path
+):
+    """Unit, ADR-013-spec «Контракт с QA-author»: resolve_db_path вызывается
+    напрямую с вручную собранным HostConfig — без discovery, без обхода вверх.
+    cwd намеренно ставится в каталог, отличный от каталога .ktalk.toml, чтобы
+    join нельзя было случайно спутать со старым (дефектным) резолвом от cwd."""
+    monkeypatch.delenv("KTALK_REGISTRY_DB", raising=False)
+    host_config_dir = tmp_path / "host-project"
+    host_config_dir.mkdir()
+    elsewhere_cwd = tmp_path / "elsewhere"
+    elsewhere_cwd.mkdir()
+    monkeypatch.chdir(elsewhere_cwd)
+
+    from ktalk_cli.config import resolve_db_path
+    from ktalk_cli.host_config import HostConfig
+
+    host_config = HostConfig(
+        registry={"db_path": "custom/registry.db"},
+        path=host_config_dir / ".ktalk.toml",
+    )
+    resolved = resolve_db_path(None, host_config=host_config)
+    assert resolved == host_config_dir / "custom/registry.db", (
+        "TODO: FR-23 AC-4 — относительный db_path обязан джойниться с "
+        "host_config.path.parent, не оставаться голым Path(configured)"
+    )
+    assert resolved != elsewhere_cwd / "custom/registry.db"
+
+
+def test_fr23_ac5_absolute_db_path_ignores_host_config_dir_even_when_path_set(
+    monkeypatch, tmp_path
+):
+    """Unit, регрессия FR-23 AC-5: абсолютный db_path применяется как есть, даже
+    когда host_config.path указывает на совсем другой каталог — каталог
+    .ktalk.toml не должен «подмешиваться» в резолюцию абсолютного пути."""
+    monkeypatch.delenv("KTALK_REGISTRY_DB", raising=False)
+    absolute_db = tmp_path / "abs-store" / "registry.db"
+    host_config_dir = tmp_path / "unrelated-config-dir"
+
+    from ktalk_cli.config import resolve_db_path
+    from ktalk_cli.host_config import HostConfig
+
+    host_config = HostConfig(
+        registry={"db_path": str(absolute_db)},
+        path=host_config_dir / ".ktalk.toml",
+    )
+    resolved = resolve_db_path(None, host_config=host_config)
+    assert resolved == absolute_db
+    assert not str(resolved).startswith(str(host_config_dir)), (
+        "TODO: FR-23 AC-5 — абсолютный db_path не должен резолвиться относительно "
+        "каталога .ktalk.toml"
+    )
+
+
+def test_fr23_ac4_host_config_path_none_with_relative_db_path_raises_not_silent_cwd_fallback(
+    monkeypatch, tmp_path
+):
+    """Masked-failure класс (ADR-013-spec, edge case): HostConfig собран вручную
+    (не через discover_host_config) с относительным db_path и path=None — базы
+    для join нет. Ожидание — явное исключение, НЕ тихий откат на резолюцию от
+    cwd (тот самый откат и есть исходный дефект ktalk-mcp-ds6, только замаскированный
+    отсутствием ошибки вместо неверного пути)."""
+    monkeypatch.delenv("KTALK_REGISTRY_DB", raising=False)
+    monkeypatch.chdir(tmp_path)
+
+    from ktalk_cli.config import resolve_db_path
+    from ktalk_cli.host_config import HostConfig
+
+    host_config = HostConfig(registry={"db_path": "relative/registry.db"}, path=None)
+    with pytest.raises(Exception):
+        resolve_db_path(None, host_config=host_config)
+
+
+def test_fr23_ac4_warn_if_sync_dir_applies_to_final_joined_path_not_bare_relative_value(
+    monkeypatch, tmp_path, capsys
+):
+    """ADR-013-spec «Поток данных» п.4: warn_if_sync_dir обязан применяться к
+    итоговому (уже джойненному) пути. Маркер `Dropbox` присутствует только в
+    каталоге .ktalk.toml, не в самом относительном db_path — до починки
+    warn_if_sync_dir вызывался на голом Path("registry.db") и маркер не находил,
+    после починки видит его в резолвленном абсолютном пути."""
+    monkeypatch.delenv("KTALK_REGISTRY_DB", raising=False)
+    host_config_dir = tmp_path / "Dropbox" / "project"
+    host_config_dir.mkdir(parents=True)
+
+    from ktalk_cli.config import resolve_db_path
+    from ktalk_cli.host_config import HostConfig
+
+    host_config = HostConfig(
+        registry={"db_path": "registry.db"}, path=host_config_dir / ".ktalk.toml"
+    )
+    resolve_db_path(None, host_config=host_config)
+    captured = capsys.readouterr()
+    assert "Dropbox" in captured.err, (
+        "TODO: FR-23 AC-4 — warn_if_sync_dir обязан видеть маркер в резолвленном "
+        "(джойненном) пути, а не в голом относительном db_path"
+    )

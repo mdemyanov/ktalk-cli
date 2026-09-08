@@ -59,6 +59,12 @@ git-репозитории плагина (недостижимо для `pytest
 | FR-23 AC-2 | `--db` не задан, заданы env и конфиг хозяина -> `KTALK_REGISTRY_DB` | — | unit | `test_ac_fr23_2_flag_absent_env_and_host_config_given_env_wins` | red (stub) |
 | FR-23 AC-3 | Только конфиг хозяина задаёт путь -> он, не машинный дефолт | путь конфига, не `95_TRANSCRIPTS/.registry.db` | unit | `test_ac_fr23_3_only_host_config_given_host_config_wins_over_machine_default` | red (stub) |
 | FR-22 AC-1 (регрессия сюда же) | Ни один из четырёх источников не задан -> машинный дефолт, не относительный `95_TRANSCRIPTS/.registry.db` | `not resolved.is_relative_to(Path.cwd())` | unit | `test_resolve_db_path_none_of_the_four_sources_falls_through_to_machine_default` | red (stub) |
+| FR-23 AC-4 (ktalk-mcp-ds6) | Относительный `db_path` джойнится с `host_config.path.parent`, не с cwd | `resolve_db_path(None, host_config=...)` — cwd намеренно другой каталог | unit | `test_fr23_ac4_relative_db_path_joins_against_host_config_dir_not_cwd` | red (stub) |
+| FR-23 AC-5 (ktalk-mcp-ds6) | Абсолютный `db_path` — как есть, каталог `.ktalk.toml` не участвует | `resolved == absolute_db`, `not resolved` внутри каталога конфига | unit | `test_fr23_ac5_absolute_db_path_ignores_host_config_dir_even_when_path_set` | **green** (уже верно сегодня — абсолютная ветка не трогает `host_config.path`) |
+| FR-23 AC-4 (masked failure, ADR-013-spec edge case) | `host_config.path is None` + относительный `db_path` -> исключение, не тихий откат на cwd | `pytest.raises(Exception)` | unit | `test_fr23_ac4_host_config_path_none_with_relative_db_path_raises_not_silent_cwd_fallback` | red (stub) |
+| FR-23 AC-4 / NFR-14 AC-2 (поток данных п.4) | `warn_if_sync_dir` применяется к итоговому джойненному пути, не к голому относительному `db_path` | маркер `Dropbox` в каталоге конфига, не в самом `db_path` — предупреждение обязано появиться | unit | `test_fr23_ac4_warn_if_sync_dir_applies_to_final_joined_path_not_bare_relative_value` | red (stub) |
+| FR-23 AC-4 (интеграция, discovery-режим 2 — обход вверх) | Буквальное воспроизведение симптома: `cd .../95_TRANSCRIPTS && ktalk dashboard` из отчёта владельца | `main(["dashboard", "--json"])`, `rc == 0`, cwd — подкаталог хранилища | integration | `test_fr23_ac4_bare_cli_relative_db_path_from_subdirectory_reproduces_dashboard_symptom` (`tests/test_cli_host_config_wiring.py`) | red (stub) |
+| FR-23 AC-4 (интеграция, discovery-режим 1 — `CLAUDE_PROJECT_DIR`) | Относительный `db_path` резолвится от `CLAUDE_PROJECT_DIR`, cwd — не предок и не потомок проекта | `main(["list", "--json"])`, `rc == 0` | integration | `test_fr23_ac4_explicit_claude_project_dir_relative_db_path_ignores_unrelated_cwd` (`tests/test_cli_host_config_wiring.py`) | red (stub) |
 
 ### FR-21 — Работа без vault-раскладки (`tests/test_fr21_no_vault_layout.py`)
 
@@ -158,6 +164,20 @@ git-репозиторий (ADR-012 §4), недостижимый для `pytes
   проектом).
 - `--db` указывает на заведомо недостижимый путь — `ktalk config show` всё равно
   отрабатывает (реестр не открывается вовсе для этой команды).
+- (ktalk-mcp-ds6) Относительный `db_path` резолвится из подкаталога хранилища,
+  не только из корня проекта — воспроизводит буквальный отчёт владельца
+  (`cd .../95_TRANSCRIPTS && ktalk dashboard`).
+- (ktalk-mcp-ds6) Дискавери-режим 1 (`CLAUDE_PROJECT_DIR`) и режим 2 (обход
+  вверх) покрыты join'ом относительного `db_path` по отдельности — происхождение
+  `host_config.path` разное, но целевое значение базы join одно и то же
+  («Контракт с QA-author» ADR-013-spec).
+- (класс «malformed/mistyped input», ktalk-mcp-ds6) N/A для новых тестов этого
+  дефекта: неверно типизированный/опечатанный `db_path` (не строка, неизвестная
+  секция) уже покрыт FR-20 AC-3 (`tests/test_host_config.py`,
+  `test_ac_fr20_3_*`) на слое парсинга/валидации `.ktalk.toml` — до того, как
+  `resolve_db_path` вообще видит значение. Join-дефект ds6 живёт строго после
+  этого шага (значение уже прошло валидацию типа), дублировать проверку типа
+  здесь нечем.
 
 ## Error cases
 
@@ -174,6 +194,11 @@ git-репозиторий (ADR-012 §4), недостижимый для `pytes
   «занято» (locked/busy), не generic traceback.
 - `ktalk config show` на малформенном конфиге — ненулевой код возврата, диагностика
   в stderr, не тихий переход на дефолт.
+- (ktalk-mcp-ds6, masked failure) `host_config.path is None` при относительном
+  `db_path` — исключение, не тихий откат на резолюцию от cwd (ручная сборка
+  `HostConfig`, не через `discover_host_config`; в проде `path` заполняется
+  всегда, но контракт вызывающей стороны обязан явно проваливаться, а не
+  молчать, если это условие нарушено).
 
 ## Не покрываем (вне scope этого пакета)
 
