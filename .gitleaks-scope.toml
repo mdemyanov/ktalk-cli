@@ -37,8 +37,6 @@ useDefault = true
 
 [allowlist]
 regexes = [
-  # tests/test_token_file.py:118,161 — фикстура write_token(), не секрет в обороте.
-  '''oMGQT83CGEO38F6y7rsL''',
   # talk.public.api-api-2.json:3191,3343,3495 — nextPageToken-пример, base64('{"page":2}').
   '''eyJwYWdlIjoyfQ==''',
 ]

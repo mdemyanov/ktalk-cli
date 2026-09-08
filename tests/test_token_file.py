@@ -50,9 +50,9 @@ def test_write_token_creates_private_file_and_directory(monkeypatch, tmp_path):
     monkeypatch.delenv("KTALK_TOKEN_FILE", raising=False)
     from ktalk_cli.token_file import write_token
 
-    path = write_token("oMGQT83CGEO38F6y7rsL")
+    path = write_token("FIXTUREnotArealToken01")
 
-    assert path.read_text(encoding="utf-8") == "oMGQT83CGEO38F6y7rsL"
+    assert path.read_text(encoding="utf-8") == "FIXTUREnotArealToken01"
     assert _mode(path) == 0o600
     assert _mode(path.parent) == 0o700
 
@@ -63,9 +63,9 @@ def test_write_token_strips_surrounding_whitespace(monkeypatch, tmp_path):
     monkeypatch.delenv("KTALK_TOKEN_FILE", raising=False)
     from ktalk_cli.token_file import read_token, write_token
 
-    write_token("  oMGQT83CGEO38F6y7rsL\n")
+    write_token("  FIXTUREnotArealToken01\n")
 
-    assert read_token() == "oMGQT83CGEO38F6y7rsL"
+    assert read_token() == "FIXTUREnotArealToken01"
 
 
 def test_write_token_rejects_empty_value(monkeypatch, tmp_path):
@@ -93,7 +93,7 @@ def test_read_token_refuses_world_readable_file(monkeypatch, tmp_path):
     monkeypatch.delenv("KTALK_TOKEN_FILE", raising=False)
     from ktalk_cli.token_file import read_token, write_token
 
-    path = write_token("oMGQT83CGEO38F6y7rsL")
+    path = write_token("FIXTUREnotArealToken01")
     path.chmod(0o644)
 
     assert read_token() is None
@@ -111,10 +111,10 @@ def test_settings_reads_token_file_when_env_empty(monkeypatch, tmp_path):
     from ktalk_cli.config import Settings
     from ktalk_cli.token_file import write_token
 
-    write_token("oMGQT83CGEO38F6y7rsL")
+    write_token("FIXTUREnotArealToken01")
 
     settings = Settings()
-    assert settings.auth_credential == "oMGQT83CGEO38F6y7rsL"
+    assert settings.auth_credential == "FIXTUREnotArealToken01"
 
 
 def test_env_session_token_wins_over_file(monkeypatch, tmp_path):
@@ -141,9 +141,9 @@ def test_token_from_file_is_masked_in_error_text(monkeypatch, tmp_path):
     from ktalk_cli.config import redact_secrets
     from ktalk_cli.token_file import write_token
 
-    write_token("oMGQT83CGEO38F6y7rsL")
+    write_token("FIXTUREnotArealToken01")
 
-    assert "oMGQT83CGEO38F6y7rsL" not in redact_secrets("token=oMGQT83CGEO38F6y7rsL")
+    assert "FIXTUREnotArealToken01" not in redact_secrets("token=FIXTUREnotArealToken01")
 
 
 # --- CLI: ktalk token set | status ----------------------------------------
@@ -156,13 +156,13 @@ def test_cli_token_set_reads_stdin_and_writes_private_file(monkeypatch, tmp_path
     from ktalk_cli.cli import main
     from ktalk_cli.token_file import token_path
 
-    monkeypatch.setattr("sys.stdin", _FakeStdin("oMGQT83CGEO38F6y7rsL\n"))
+    monkeypatch.setattr("sys.stdin", _FakeStdin("FIXTUREnotArealToken01\n"))
     rc = main(["token", "set", "-"])
 
     assert rc == 0
-    assert token_path().read_text(encoding="utf-8") == "oMGQT83CGEO38F6y7rsL"
+    assert token_path().read_text(encoding="utf-8") == "FIXTUREnotArealToken01"
     assert _mode(token_path()) == 0o600
-    assert "oMGQT83CGEO38F6y7rsL" not in capsys.readouterr().out
+    assert "FIXTUREnotArealToken01" not in capsys.readouterr().out
 
 
 def test_cli_token_status_json_reports_present_without_leaking_value(
@@ -173,7 +173,7 @@ def test_cli_token_status_json_reports_present_without_leaking_value(
     from ktalk_cli.cli import main
     from ktalk_cli.token_file import write_token
 
-    write_token("oMGQT83CGEO38F6y7rsL")
+    write_token("FIXTUREnotArealToken01")
     rc = main(["token", "status", "--json"])
 
     out = capsys.readouterr().out
@@ -181,7 +181,7 @@ def test_cli_token_status_json_reports_present_without_leaking_value(
     payload = json.loads(out)
     assert payload["present"] is True
     assert payload["mode"] == "0600"
-    assert "oMGQT83CGEO38F6y7rsL" not in out
+    assert "FIXTUREnotArealToken01" not in out
 
 
 def test_cli_token_status_absent_file_is_not_an_error(monkeypatch, tmp_path, capsys):
@@ -201,7 +201,7 @@ def test_cli_token_status_flags_too_wide_permissions(monkeypatch, tmp_path, caps
     from ktalk_cli.cli import main
     from ktalk_cli.token_file import write_token
 
-    write_token("oMGQT83CGEO38F6y7rsL").chmod(0o644)
+    write_token("FIXTUREnotArealToken01").chmod(0o644)
     rc = main(["token", "status", "--json"])
 
     payload = json.loads(capsys.readouterr().out)
@@ -264,9 +264,9 @@ def test_cli_token_set_bad_value_exits_nonzero_and_keeps_old_token(
     from ktalk_cli.cli import main
     from ktalk_cli.token_file import read_token, write_token
 
-    write_token("oMGQT83CGEO38F6y7rsL")
+    write_token("FIXTUREnotArealToken01")
     rc = main(["token", "set", "/Users/mdemyanov/Devel/ktalk-mcp/README.md"])
 
     assert rc != 0
     assert "не похоже на токен" in capsys.readouterr().err
-    assert read_token() == "oMGQT83CGEO38F6y7rsL"
+    assert read_token() == "FIXTUREnotArealToken01"
